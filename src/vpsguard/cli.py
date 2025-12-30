@@ -376,6 +376,136 @@ verbosity = 1
         raise typer.Exit(1)
 
 
+@app.command()
+def analyze(
+    file_path: str = typer.Argument(..., help="Path to log file or '-' for stdin"),
+    config: Optional[str] = typer.Option(None, "--config", help="Path to TOML config file"),
+    input_format: Optional[str] = typer.Option(None, "--input-format", help="Input format: auth.log, secure, journald"),
+    rules_only: bool = typer.Option(True, "--rules-only/--with-ml", help="Only run rule-based detection (ML not implemented yet)"),
+    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Verbosity level (0=critical/high, 1=+medium, 2=all)"),
+    format: str = typer.Option("terminal", "--format", help="Output format: terminal, markdown, json"),
+    output: Optional[str] = typer.Option(None, "--output", help="Output file path (stdout if not specified)"),
+):
+    """Analyze log files for security threats."""
+    try:
+        from datetime import datetime, timezone
+        from vpsguard.config import load_config
+        from vpsguard.rules.engine import RuleEngine
+        from vpsguard.reporters import get_reporter
+        from vpsguard.models.events import AnalysisReport, Severity
+
+        # Load configuration
+        try:
+            vps_config = load_config(config)
+            if format != "json":
+                if config:
+                    console.print(f"[dim]Loaded config from: {config}[/dim]")
+                else:
+                    console.print(f"[dim]Using default configuration[/dim]")
+        except FileNotFoundError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
+
+        # Read input
+        if file_path == "-":
+            content = sys.stdin.read()
+            filename = None
+            log_source = "stdin"
+        else:
+            path = Path(file_path)
+            if not path.exists():
+                console.print(f"[red]Error: File not found: {file_path}[/red]")
+                raise typer.Exit(1)
+            content = path.read_text(encoding="utf-8")
+            filename = path.name
+            log_source = str(path)
+
+        # Auto-detect format if not specified
+        if input_format is None:
+            input_format = _auto_detect_format(content, filename)
+            if format != "json":
+                console.print(f"[dim]Auto-detected format: {input_format}[/dim]")
+
+        # Get parser
+        try:
+            parser = get_parser(input_format)
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
+
+        # Parse content
+        if format != "json":
+            console.print(f"[dim]Parsing log file...[/dim]")
+        parsed = parser.parse(content)
+
+        # Show parse errors if any
+        if parsed.parse_errors and format != "json":
+            console.print(f"[yellow]Parse errors: {len(parsed.parse_errors)}[/yellow]")
+
+        # Run rule engine
+        if format != "json":
+            console.print(f"[dim]Running rule engine...[/dim]")
+
+        engine = RuleEngine(vps_config)
+        rule_output = engine.evaluate(parsed.events)
+
+        # Filter violations by verbosity level
+        filtered_violations = []
+        for violation in rule_output.violations:
+            if verbose == 0:
+                # Only CRITICAL and HIGH
+                if violation.severity in [Severity.CRITICAL, Severity.HIGH]:
+                    filtered_violations.append(violation)
+            elif verbose == 1:
+                # CRITICAL, HIGH, and MEDIUM
+                if violation.severity in [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM]:
+                    filtered_violations.append(violation)
+            else:
+                # All severities (verbose >= 2)
+                filtered_violations.append(violation)
+
+        # Build analysis report
+        analysis_report = AnalysisReport(
+            timestamp=datetime.now(timezone.utc),
+            log_source=log_source,
+            total_events=len(parsed.events),
+            rule_violations=filtered_violations,
+            anomalies=[],  # ML not implemented yet (Task 7)
+            baseline_drift=None,
+            summary=None,
+        )
+
+        # Generate report
+        reporter = get_reporter(format)
+
+        if output:
+            # Write to file
+            reporter.generate_to_file(analysis_report, output)
+            if format != "json":
+                console.print(f"[green]Report written to: {output}[/green]")
+        else:
+            # Output to console
+            if format == "terminal":
+                # Use display method for terminal reporter
+                from vpsguard.reporters.terminal import TerminalReporter
+                if isinstance(reporter, TerminalReporter):
+                    reporter.display(analysis_report)
+                else:
+                    print(reporter.generate(analysis_report))
+            else:
+                # For markdown and json, just print
+                print(reporter.generate(analysis_report))
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
 @app.callback()
 def main():
     """ML-first VPS log security analyzer."""
