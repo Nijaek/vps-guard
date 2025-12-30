@@ -377,11 +377,134 @@ verbosity = 1
 
 
 @app.command()
+def train(
+    file_path: str = typer.Argument(..., help="Path to log file to train on"),
+    model: str = typer.Option("vpsguard_model.pkl", "--model", help="Path to save model file"),
+    config: Optional[str] = typer.Option(None, "--config", help="Path to TOML config file"),
+    input_format: Optional[str] = typer.Option(None, "--input-format", help="Input format: auth.log, secure, journald"),
+    check: bool = typer.Option(False, "--check", help="Check and display baseline stats (no training)"),
+):
+    """Train ML model on log file using clean events."""
+    try:
+        from pathlib import Path
+        from vpsguard.config import load_config
+        from vpsguard.rules.engine import RuleEngine
+        from vpsguard.ml.engine import MLEngine
+        from vpsguard.ml.baseline import load_baseline
+        from datetime import datetime
+
+        model_path = Path(model)
+
+        # If --check, just display baseline info
+        if check:
+            baseline_path = model_path.with_suffix('.json')
+
+            if not baseline_path.exists():
+                console.print(f"[red]No baseline found at: {baseline_path}[/red]")
+                console.print(f"[yellow]Train a model first with: vpsguard train <logfile> --model {model}[/yellow]")
+                raise typer.Exit(1)
+
+            try:
+                baseline = load_baseline(baseline_path)
+
+                # Display baseline info
+                console.print(Panel("[bold cyan]Baseline Statistics[/bold cyan]", border_style="cyan"))
+                console.print(f"[bold]Trained at:[/bold] {baseline['trained_at']}")
+                console.print(f"[bold]Event count:[/bold] {baseline['event_count']}")
+                console.print(f"[bold]Model path:[/bold] {baseline.get('model_path', 'N/A')}")
+                console.print("\n[bold cyan]Feature Means:[/bold cyan]")
+
+                for name, mean in baseline['feature_means'].items():
+                    std = baseline['feature_stds'][name]
+                    console.print(f"  {name}: {mean:.2f} (±{std:.2f})")
+
+                return
+
+            except Exception as e:
+                console.print(f"[red]Error loading baseline: {e}[/red]")
+                raise typer.Exit(1)
+
+        # Load configuration
+        try:
+            vps_config = load_config(config)
+            if config:
+                console.print(f"[dim]Loaded config from: {config}[/dim]")
+            else:
+                console.print(f"[dim]Using default configuration[/dim]")
+        except (FileNotFoundError, ValueError) as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
+
+        # Read and parse log file
+        path = Path(file_path)
+        if not path.exists():
+            console.print(f"[red]Error: File not found: {file_path}[/red]")
+            raise typer.Exit(1)
+
+        console.print(f"[dim]Reading log file: {file_path}[/dim]")
+        content = path.read_text(encoding="utf-8")
+
+        # Auto-detect format
+        if input_format is None:
+            input_format = _auto_detect_format(content, path.name)
+            console.print(f"[dim]Auto-detected format: {input_format}[/dim]")
+
+        # Parse logs
+        parser = get_parser(input_format)
+        console.print(f"[dim]Parsing logs...[/dim]")
+        parsed = parser.parse(content)
+        console.print(f"[green]Parsed {len(parsed.events)} events[/green]")
+
+        # Run rule engine to get clean events
+        console.print(f"[dim]Running rule engine to filter attacks...[/dim]")
+        engine = RuleEngine(vps_config)
+        rule_output = engine.evaluate(parsed.events)
+
+        console.print(f"[yellow]Found {len(rule_output.violations)} rule violations[/yellow]")
+        console.print(f"[green]Clean events for training: {len(rule_output.clean_events)}[/green]")
+
+        if len(rule_output.clean_events) < 10:
+            console.print(f"[red]Error: Not enough clean events for training (need at least 10)[/red]")
+            console.print(f"[yellow]This usually means your log file is mostly attacks.[/yellow]")
+            raise typer.Exit(1)
+
+        # Train ML model
+        console.print(f"[dim]Training ML model...[/dim]")
+        ml_engine = MLEngine()
+        baseline = ml_engine.train(rule_output.clean_events)
+
+        # Save model
+        console.print(f"[dim]Saving model to: {model_path}[/dim]")
+        ml_engine.save(model_path)
+
+        # Display success
+        console.print(Panel(
+            f"[bold green]Training Complete![/bold green]\n\n"
+            f"Model saved to: {model_path}\n"
+            f"Baseline saved to: {model_path.with_suffix('.json')}\n"
+            f"Trained on {baseline['event_count']} clean events\n"
+            f"Trained at: {baseline['trained_at']}",
+            border_style="green"
+        ))
+
+        console.print("\n[cyan]Next steps:[/cyan]")
+        console.print(f"  1. Check baseline: vpsguard train --check --model {model}")
+        console.print(f"  2. Analyze logs: vpsguard analyze <logfile> --with-ml --model {model}")
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+@app.command()
 def analyze(
     file_path: str = typer.Argument(..., help="Path to log file or '-' for stdin"),
     config: Optional[str] = typer.Option(None, "--config", help="Path to TOML config file"),
     input_format: Optional[str] = typer.Option(None, "--input-format", help="Input format: auth.log, secure, journald"),
-    rules_only: bool = typer.Option(True, "--rules-only/--with-ml", help="Only run rule-based detection (ML not implemented yet)"),
+    rules_only: bool = typer.Option(True, "--rules-only/--with-ml", help="Only run rule-based detection (skip ML)"),
+    model: str = typer.Option("vpsguard_model.pkl", "--model", help="Path to ML model file"),
     verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Verbosity level (0=critical/high, 1=+medium, 2=all)"),
     format: str = typer.Option("terminal", "--format", help="Output format: terminal, markdown, json"),
     output: Optional[str] = typer.Option(None, "--output", help="Output file path (stdout if not specified)"),
@@ -389,6 +512,7 @@ def analyze(
     """Analyze log files for security threats."""
     try:
         from datetime import datetime, timezone
+        from pathlib import Path
         from vpsguard.config import load_config
         from vpsguard.rules.engine import RuleEngine
         from vpsguard.reporters import get_reporter
@@ -467,14 +591,56 @@ def analyze(
                 # All severities (verbose >= 2)
                 filtered_violations.append(violation)
 
+        # Run ML detection if requested
+        anomalies = []
+        baseline_drift = None
+
+        if not rules_only:
+            from vpsguard.ml.engine import MLEngine
+
+            model_path = Path(model)
+            baseline_path = model_path.with_suffix('.json')
+
+            if not model_path.exists():
+                if format != "json":
+                    console.print(f"[yellow]Warning: ML model not found at {model_path}[/yellow]")
+                    console.print(f"[yellow]Train a model first with: vpsguard train <logfile> --model {model}[/yellow]")
+                    console.print(f"[yellow]Continuing with rule-based detection only...[/yellow]")
+            else:
+                try:
+                    if format != "json":
+                        console.print(f"[dim]Loading ML model from {model_path}...[/dim]")
+
+                    ml_engine = MLEngine()
+                    ml_engine.load(model_path)
+
+                    if format != "json":
+                        console.print(f"[dim]Running ML anomaly detection...[/dim]")
+
+                    # Detect anomalies
+                    anomalies = ml_engine.detect(parsed.events, score_threshold=0.6)
+
+                    # Check for drift
+                    baseline_drift = ml_engine.detect_drift(parsed.events, threshold=2.0)
+
+                    if format != "json":
+                        console.print(f"[green]ML detected {len(anomalies)} anomalous IPs[/green]")
+                        if baseline_drift and baseline_drift['drift_detected']:
+                            console.print(f"[yellow]Warning: Data drift detected in {len(baseline_drift['drifted_features'])} features[/yellow]")
+
+                except Exception as e:
+                    if format != "json":
+                        console.print(f"[yellow]Warning: ML detection failed: {e}[/yellow]")
+                        console.print(f"[yellow]Continuing with rule-based detection only...[/yellow]")
+
         # Build analysis report
         analysis_report = AnalysisReport(
             timestamp=datetime.now(timezone.utc),
             log_source=log_source,
             total_events=len(parsed.events),
             rule_violations=filtered_violations,
-            anomalies=[],  # ML not implemented yet (Task 7)
-            baseline_drift=None,
+            anomalies=anomalies,
+            baseline_drift=baseline_drift,
             summary=None,
         )
 
