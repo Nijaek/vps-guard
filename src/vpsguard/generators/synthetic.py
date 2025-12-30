@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import json
 import random
 from typing import Optional
 
@@ -39,11 +40,24 @@ class GeneratorConfig:
     seed: Optional[int] = None
 
     def __post_init__(self):
-        """Set default values for optional fields."""
+        """Set default values for optional fields and validate configuration."""
         if self.start_time is None:
             self.start_time = datetime.now() - timedelta(hours=24)
         if self.end_time is None:
             self.end_time = datetime.now()
+
+        # Validate configuration parameters
+        if self.entries < 0:
+            raise ValueError(f"entries must be >= 0, got {self.entries}")
+
+        if self.baseline_ips < 1:
+            raise ValueError(f"baseline_ips must be >= 1, got {self.baseline_ips}")
+
+        if len(self.baseline_users) < 1:
+            raise ValueError(f"baseline_users must contain at least 1 user, got {len(self.baseline_users)} users")
+
+        if self.end_time <= self.start_time:
+            raise ValueError(f"end_time must be > start_time, got start_time={self.start_time}, end_time={self.end_time}")
 
 
 class SyntheticLogGenerator:
@@ -163,7 +177,6 @@ class SyntheticLogGenerator:
                 return f"{ts_str} {self.hostname} sshd[{pid}]: Accepted publickey for {username} from {ip} port {port} ssh2"
         elif format_type == "journald":
             # Return JSON format for journald
-            import json
             message = ""
             if event_type == "failed":
                 message = f"Failed password for {username} from {ip} port {port} ssh2"
@@ -186,7 +199,7 @@ class SyntheticLogGenerator:
 
         return ""
 
-    def _generate_normal_traffic(self, num_events: int, format_type: str = "auth.log") -> list[str]:
+    def _generate_normal_traffic(self, num_events: int, format_type: str = "auth.log") -> list[tuple[datetime, str]]:
         """Generate normal traffic log entries.
 
         Args:
@@ -194,7 +207,7 @@ class SyntheticLogGenerator:
             format_type: Log format type
 
         Returns:
-            List of log lines
+            List of (timestamp, log_line) tuples
         """
         logs = []
         time_range = (self.config.end_time - self.config.start_time).total_seconds()
@@ -223,7 +236,7 @@ class SyntheticLogGenerator:
 
         return logs
 
-    def _generate_brute_force_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[str]:
+    def _generate_brute_force_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[tuple[datetime, str]]:
         """Generate brute force attack pattern.
 
         Single IP, many attempts in short time window, targeting common usernames.
@@ -256,7 +269,7 @@ class SyntheticLogGenerator:
 
         return logs
 
-    def _generate_botnet_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[str]:
+    def _generate_botnet_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[tuple[datetime, str]]:
         """Generate botnet attack pattern.
 
         Many IPs, coordinated timing, same target users, tight time window.
@@ -292,7 +305,7 @@ class SyntheticLogGenerator:
 
         return logs
 
-    def _generate_credential_stuffing_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[str]:
+    def _generate_credential_stuffing_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[tuple[datetime, str]]:
         """Generate credential stuffing attack pattern.
 
         Many IPs, many unique usernames (credential list).
@@ -336,7 +349,7 @@ class SyntheticLogGenerator:
 
         return logs
 
-    def _generate_low_and_slow_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[str]:
+    def _generate_low_and_slow_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[tuple[datetime, str]]:
         """Generate low-and-slow attack pattern.
 
         Few attempts per day, spread across the entire time range.
@@ -369,7 +382,7 @@ class SyntheticLogGenerator:
 
         return logs
 
-    def _generate_breach_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[str]:
+    def _generate_breach_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[tuple[datetime, str]]:
         """Generate breach attack pattern.
 
         Failed attempts followed by eventual success (important for ML testing).
@@ -414,7 +427,7 @@ class SyntheticLogGenerator:
 
         return logs
 
-    def _generate_recon_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[str]:
+    def _generate_recon_attack(self, config: AttackConfig, format_type: str = "auth.log") -> list[tuple[datetime, str]]:
         """Generate reconnaissance attack pattern.
 
         Multiple IPs probing for valid usernames (invalid user events).
