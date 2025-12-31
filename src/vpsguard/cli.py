@@ -1,5 +1,6 @@
 """CLI interface for VPSGuard."""
 
+import re
 import sys
 import json
 from pathlib import Path
@@ -41,6 +42,10 @@ def _auto_detect_format(content: str, filename: Optional[str] = None) -> str:
             return "secure"
         elif filename_lower.endswith(".json"):
             return "journald"
+        elif "nginx" in filename_lower or "access.log" in filename_lower:
+            return "nginx"
+        elif "syslog" in filename_lower or "messages" in filename_lower:
+            return "syslog"
 
     # Check content
     lines = content.strip().split('\n')
@@ -56,6 +61,12 @@ def _auto_detect_format(content: str, filename: Optional[str] = None) -> str:
             return "journald"
         except json.JSONDecodeError:
             pass
+
+    # Nginx combined log format detection
+    # Pattern: IP - - [timestamp] "request" status bytes "referer" "user-agent"
+    nginx_pattern = r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"[^"]*"\s+\d{3}\s+'
+    if re.match(nginx_pattern, first_line):
+        return "nginx"
 
     # Both auth.log and secure use syslog format
     # Default to auth.log (they're compatible anyway)
@@ -500,23 +511,24 @@ def train(
 
 @app.command()
 def analyze(
-    file_path: str = typer.Argument(..., help="Path to log file or '-' for stdin"),
+    file_paths: List[str] = typer.Argument(..., help="Path(s) to log file(s) or '-' for stdin"),
     config: Optional[str] = typer.Option(None, "--config", help="Path to TOML config file"),
-    input_format: Optional[str] = typer.Option(None, "--input-format", help="Input format: auth.log, secure, journald"),
+    input_format: Optional[str] = typer.Option(None, "--input-format", help="Input format: auth.log, secure, journald, nginx, syslog"),
     rules_only: bool = typer.Option(True, "--rules-only/--with-ml", help="Only run rule-based detection (skip ML)"),
     model: str = typer.Option("vpsguard_model.pkl", "--model", help="Path to ML model file"),
     verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Verbosity level (0=critical/high, 1=+medium, 2=all)"),
-    format: str = typer.Option("terminal", "--format", help="Output format: terminal, markdown, json"),
+    format: str = typer.Option("terminal", "--format", help="Output format: terminal, markdown, json, html"),
     output: Optional[str] = typer.Option(None, "--output", help="Output file path (stdout if not specified)"),
+    save_history: bool = typer.Option(False, "--save-history", help="Save run to history database for tracking"),
 ):
-    """Analyze log files for security threats."""
+    """Analyze log files for security threats. Supports multiple log files."""
     try:
         from datetime import datetime, timezone
         from pathlib import Path
         from vpsguard.config import load_config
         from vpsguard.rules.engine import RuleEngine
         from vpsguard.reporters import get_reporter
-        from vpsguard.models.events import AnalysisReport, Severity
+        from vpsguard.models.events import AnalysisReport, Severity, AuthEvent
 
         # Load configuration
         try:
@@ -533,48 +545,70 @@ def analyze(
             console.print(f"[red]Error: {e}[/red]")
             raise typer.Exit(1)
 
-        # Read input
-        if file_path == "-":
-            content = sys.stdin.read()
-            filename = None
-            log_source = "stdin"
-        else:
-            path = Path(file_path)
-            if not path.exists():
-                console.print(f"[red]Error: File not found: {file_path}[/red]")
+        # Collect all events from all files
+        all_events: List[AuthEvent] = []
+        log_sources: List[str] = []
+        total_parse_errors = 0
+
+        for file_path in file_paths:
+            # Read input
+            if file_path == "-":
+                content = sys.stdin.read()
+                filename = None
+                log_source = "stdin"
+            else:
+                path = Path(file_path)
+                if not path.exists():
+                    console.print(f"[red]Error: File not found: {file_path}[/red]")
+                    raise typer.Exit(1)
+                content = path.read_text(encoding="utf-8")
+                filename = path.name
+                log_source = str(path)
+
+            log_sources.append(log_source)
+
+            # Auto-detect format if not specified
+            detected_format = input_format
+            if detected_format is None:
+                detected_format = _auto_detect_format(content, filename)
+                if format != "json":
+                    console.print(f"[dim]{log_source}: Auto-detected format: {detected_format}[/dim]")
+
+            # Get parser
+            try:
+                parser = get_parser(detected_format)
+            except ValueError as e:
+                console.print(f"[red]Error: {e}[/red]")
                 raise typer.Exit(1)
-            content = path.read_text(encoding="utf-8")
-            filename = path.name
-            log_source = str(path)
 
-        # Auto-detect format if not specified
-        if input_format is None:
-            input_format = _auto_detect_format(content, filename)
+            # Parse content
             if format != "json":
-                console.print(f"[dim]Auto-detected format: {input_format}[/dim]")
+                console.print(f"[dim]Parsing {log_source}...[/dim]")
+            parsed = parser.parse(content)
 
-        # Get parser
-        try:
-            parser = get_parser(input_format)
-        except ValueError as e:
-            console.print(f"[red]Error: {e}[/red]")
-            raise typer.Exit(1)
+            # Collect events and errors
+            all_events.extend(parsed.events)
+            total_parse_errors += len(parsed.parse_errors)
 
-        # Parse content
+            if format != "json":
+                console.print(f"[green]{log_source}: {len(parsed.events)} events parsed[/green]")
+
+        # Show parse errors summary if any
+        if total_parse_errors > 0 and format != "json":
+            console.print(f"[yellow]Total parse errors across all files: {total_parse_errors}[/yellow]")
+
+        # Combined log source string
+        combined_log_source = ", ".join(log_sources) if len(log_sources) <= 3 else f"{len(log_sources)} files"
+
         if format != "json":
-            console.print(f"[dim]Parsing log file...[/dim]")
-        parsed = parser.parse(content)
-
-        # Show parse errors if any
-        if parsed.parse_errors and format != "json":
-            console.print(f"[yellow]Parse errors: {len(parsed.parse_errors)}[/yellow]")
+            console.print(f"[dim]Total events from all sources: {len(all_events)}[/dim]")
 
         # Run rule engine
         if format != "json":
             console.print(f"[dim]Running rule engine...[/dim]")
 
         engine = RuleEngine(vps_config)
-        rule_output = engine.evaluate(parsed.events)
+        rule_output = engine.evaluate(all_events)
 
         # Filter violations by verbosity level
         filtered_violations = []
@@ -618,10 +652,10 @@ def analyze(
                         console.print(f"[dim]Running ML anomaly detection...[/dim]")
 
                     # Detect anomalies
-                    anomalies = ml_engine.detect(parsed.events, score_threshold=0.6)
+                    anomalies = ml_engine.detect(all_events, score_threshold=0.6)
 
                     # Check for drift
-                    baseline_drift = ml_engine.detect_drift(parsed.events, threshold=2.0)
+                    baseline_drift = ml_engine.detect_drift(all_events, threshold=2.0)
 
                     if format != "json":
                         console.print(f"[green]ML detected {len(anomalies)} anomalous IPs[/green]")
@@ -636,8 +670,8 @@ def analyze(
         # Build analysis report
         analysis_report = AnalysisReport(
             timestamp=datetime.now(timezone.utc),
-            log_source=log_source,
-            total_events=len(parsed.events),
+            log_source=combined_log_source,
+            total_events=len(all_events),
             rule_violations=filtered_violations,
             anomalies=anomalies,
             baseline_drift=baseline_drift,
@@ -662,8 +696,455 @@ def analyze(
                 else:
                     print(reporter.generate(analysis_report))
             else:
-                # For markdown and json, just print
+                # For markdown, json, html - just print
                 print(reporter.generate(analysis_report))
+
+        # Save to history if requested
+        if save_history:
+            from vpsguard.history import HistoryDB
+            db = HistoryDB()
+            run_id = db.save_run(analysis_report)
+            if format != "json":
+                console.print(f"[dim]Run saved to history (ID: {run_id})[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+@app.command()
+def watch(
+    file_paths: List[str] = typer.Argument(..., help="Path(s) to log file(s) to monitor"),
+    interval: int = typer.Option(300, "--interval", "-i", help="Check interval in seconds (default: 300)"),
+    config: Optional[str] = typer.Option(None, "--config", help="Path to TOML config file"),
+    input_format: Optional[str] = typer.Option(None, "--input-format", help="Input format: auth.log, secure, journald, nginx, syslog"),
+    model: str = typer.Option("vpsguard_model.pkl", "--model", help="Path to ML model file"),
+    with_ml: bool = typer.Option(False, "--with-ml", help="Enable ML detection"),
+    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Verbosity level"),
+    format: str = typer.Option("terminal", "--format", help="Output format: terminal, markdown, json, html"),
+    output_dir: Optional[str] = typer.Option(None, "--output-dir", help="Directory to save periodic reports"),
+):
+    """Watch log files and run periodic analysis.
+
+    Continuously monitors log files and runs analysis at specified intervals.
+    Useful for scheduled security checks and monitoring.
+
+    Example:
+        vpsguard watch /var/log/auth.log --interval 600
+        vpsguard watch /var/log/auth.log /var/log/nginx/access.log -i 300 --with-ml
+    """
+    import time
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from vpsguard.config import load_config
+    from vpsguard.rules.engine import RuleEngine
+    from vpsguard.reporters import get_reporter
+    from vpsguard.models.events import AnalysisReport, Severity, AuthEvent
+
+    try:
+        # Validate files exist
+        for file_path in file_paths:
+            if file_path != "-":
+                path = Path(file_path)
+                if not path.exists():
+                    console.print(f"[red]Error: File not found: {file_path}[/red]")
+                    raise typer.Exit(1)
+
+        # Create output directory if specified
+        if output_dir:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            console.print(f"[dim]Reports will be saved to: {output_dir}[/dim]")
+
+        # Load configuration once
+        try:
+            vps_config = load_config(config)
+            if config:
+                console.print(f"[dim]Loaded config from: {config}[/dim]")
+            else:
+                console.print(f"[dim]Using default configuration[/dim]")
+        except (FileNotFoundError, ValueError) as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
+
+        # Load ML model if requested
+        ml_engine = None
+        if with_ml:
+            from vpsguard.ml.engine import MLEngine
+            model_path = Path(model)
+            if model_path.exists():
+                console.print(f"[dim]Loading ML model from {model_path}...[/dim]")
+                ml_engine = MLEngine()
+                ml_engine.load(model_path)
+                console.print(f"[green]ML model loaded successfully[/green]")
+            else:
+                console.print(f"[yellow]Warning: ML model not found at {model_path}[/yellow]")
+                console.print(f"[yellow]Running without ML detection[/yellow]")
+
+        console.print(f"\n[bold cyan]Starting watch mode[/bold cyan]")
+        console.print(f"[dim]Monitoring: {', '.join(file_paths)}[/dim]")
+        console.print(f"[dim]Interval: {interval} seconds[/dim]")
+        console.print(f"[dim]Press Ctrl+C to stop[/dim]\n")
+
+        run_count = 0
+        while True:
+            run_count += 1
+            run_time = datetime.now(timezone.utc)
+
+            console.print(f"[bold]═══ Run #{run_count} at {run_time.strftime('%Y-%m-%d %H:%M:%S UTC')} ═══[/bold]")
+
+            # Collect events from all files
+            all_events: List[AuthEvent] = []
+            log_sources: List[str] = []
+
+            for file_path in file_paths:
+                path = Path(file_path)
+                content = path.read_text(encoding="utf-8")
+                filename = path.name
+                log_source = str(path)
+                log_sources.append(log_source)
+
+                # Auto-detect format
+                detected_format = input_format
+                if detected_format is None:
+                    detected_format = _auto_detect_format(content, filename)
+
+                # Parse
+                parser = get_parser(detected_format)
+                parsed = parser.parse(content)
+                all_events.extend(parsed.events)
+
+            console.print(f"[dim]Parsed {len(all_events)} events from {len(file_paths)} file(s)[/dim]")
+
+            # Run rule engine
+            engine = RuleEngine(vps_config)
+            rule_output = engine.evaluate(all_events)
+
+            # Filter violations by verbosity
+            filtered_violations = []
+            for violation in rule_output.violations:
+                if verbose == 0:
+                    if violation.severity in [Severity.CRITICAL, Severity.HIGH]:
+                        filtered_violations.append(violation)
+                elif verbose == 1:
+                    if violation.severity in [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM]:
+                        filtered_violations.append(violation)
+                else:
+                    filtered_violations.append(violation)
+
+            # Run ML if available
+            anomalies = []
+            baseline_drift = None
+            if ml_engine:
+                try:
+                    anomalies = ml_engine.detect(all_events, score_threshold=0.6)
+                    baseline_drift = ml_engine.detect_drift(all_events, threshold=2.0)
+                except Exception as e:
+                    console.print(f"[yellow]ML detection error: {e}[/yellow]")
+
+            # Build report
+            combined_log_source = ", ".join(log_sources) if len(log_sources) <= 3 else f"{len(log_sources)} files"
+            analysis_report = AnalysisReport(
+                timestamp=run_time,
+                log_source=combined_log_source,
+                total_events=len(all_events),
+                rule_violations=filtered_violations,
+                anomalies=anomalies,
+                baseline_drift=baseline_drift,
+                summary=None,
+            )
+
+            # Count findings
+            critical = sum(1 for v in filtered_violations if v.severity == Severity.CRITICAL)
+            high = sum(1 for v in filtered_violations if v.severity == Severity.HIGH)
+            medium = sum(1 for v in filtered_violations if v.severity == Severity.MEDIUM)
+            low = sum(1 for v in filtered_violations if v.severity == Severity.LOW)
+
+            # Print summary
+            if critical > 0:
+                console.print(f"[bold red]CRITICAL: {critical}[/bold red]", end="  ")
+            if high > 0:
+                console.print(f"[bold yellow]HIGH: {high}[/bold yellow]", end="  ")
+            if medium > 0:
+                console.print(f"[yellow]MEDIUM: {medium}[/yellow]", end="  ")
+            if low > 0:
+                console.print(f"[blue]LOW: {low}[/blue]", end="  ")
+            if anomalies:
+                console.print(f"[magenta]ML Anomalies: {len(anomalies)}[/magenta]", end="")
+
+            if critical == 0 and high == 0 and medium == 0 and low == 0 and not anomalies:
+                console.print(f"[green]No findings[/green]", end="")
+
+            console.print()  # Newline
+
+            # Save report if output_dir specified
+            if output_dir:
+                reporter = get_reporter(format)
+                timestamp_str = run_time.strftime('%Y%m%d_%H%M%S')
+                ext = "html" if format == "html" else ("json" if format == "json" else "md" if format == "markdown" else "txt")
+                report_file = Path(output_dir) / f"vpsguard_report_{timestamp_str}.{ext}"
+                reporter.generate_to_file(analysis_report, str(report_file))
+                console.print(f"[dim]Report saved: {report_file}[/dim]")
+
+            # Wait for next interval
+            console.print(f"[dim]Next check in {interval} seconds...[/dim]\n")
+            time.sleep(interval)
+
+    except KeyboardInterrupt:
+        console.print(f"\n[yellow]Watch mode stopped by user[/yellow]")
+        console.print(f"[dim]Total runs: {run_count}[/dim]")
+        raise typer.Exit(0)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+@app.command()
+def history(
+    action: str = typer.Argument("list", help="Action: list, show, compare, trend, top, ip, cleanup"),
+    run_id: Optional[int] = typer.Option(None, "--run", "-r", help="Run ID for show/compare actions"),
+    run_id2: Optional[int] = typer.Option(None, "--compare-to", "-c", help="Second run ID for compare action"),
+    ip: Optional[str] = typer.Option(None, "--ip", help="IP address for ip action"),
+    days: int = typer.Option(30, "--days", "-d", help="Number of days for trend/top/cleanup"),
+    limit: int = typer.Option(10, "--limit", "-l", help="Maximum items to show"),
+    db_path: Optional[str] = typer.Option(None, "--db", help="Path to history database"),
+):
+    """View and manage analysis history.
+
+    Actions:
+      list    - Show recent analysis runs (default)
+      show    - Show details of a specific run (requires --run)
+      compare - Compare two runs (requires --run and --compare-to)
+      trend   - Show daily trend of findings
+      top     - Show top offending IPs
+      ip      - Show history for specific IP (requires --ip)
+      cleanup - Delete old runs (uses --days)
+
+    Examples:
+        vpsguard history
+        vpsguard history show --run 5
+        vpsguard history compare --run 3 --compare-to 5
+        vpsguard history trend --days 7
+        vpsguard history top --limit 20
+        vpsguard history ip --ip 192.168.1.1
+        vpsguard history cleanup --days 90
+    """
+    from pathlib import Path
+    from vpsguard.history import HistoryDB
+
+    try:
+        # Initialize database
+        db = HistoryDB(Path(db_path) if db_path else None)
+
+        if action == "list":
+            runs = db.get_recent_runs(limit)
+            if not runs:
+                console.print("[yellow]No history found.[/yellow]")
+                console.print("[dim]Run 'vpsguard analyze' with --save-history to start recording.[/dim]")
+                return
+
+            table = Table(title="Recent Analysis Runs", show_lines=False)
+            table.add_column("ID", style="cyan", no_wrap=True)
+            table.add_column("Timestamp", style="white")
+            table.add_column("Source", style="dim")
+            table.add_column("Events", style="blue", justify="right")
+            table.add_column("C", style="red", justify="right")
+            table.add_column("H", style="yellow", justify="right")
+            table.add_column("M", style="yellow", justify="right")
+            table.add_column("L", style="blue", justify="right")
+            table.add_column("ML", style="magenta", justify="right")
+
+            for run in runs:
+                timestamp = run['timestamp'][:19].replace('T', ' ')
+                source = run['log_source'][:30] + "..." if len(run['log_source']) > 30 else run['log_source']
+                table.add_row(
+                    str(run['id']),
+                    timestamp,
+                    source,
+                    str(run['total_events']),
+                    str(run['critical_count']) if run['critical_count'] else "-",
+                    str(run['high_count']) if run['high_count'] else "-",
+                    str(run['medium_count']) if run['medium_count'] else "-",
+                    str(run['low_count']) if run['low_count'] else "-",
+                    str(run['anomaly_count']) if run['anomaly_count'] else "-",
+                )
+
+            console.print(table)
+            console.print(f"\n[dim]Use 'vpsguard history show --run ID' for details[/dim]")
+
+        elif action == "show":
+            if not run_id:
+                console.print("[red]Error: --run ID required for show action[/red]")
+                raise typer.Exit(1)
+
+            run = db.get_run(run_id)
+            if not run:
+                console.print(f"[red]Error: Run {run_id} not found[/red]")
+                raise typer.Exit(1)
+
+            violations = db.get_run_violations(run_id)
+            anomalies = db.get_run_anomalies(run_id)
+
+            # Show run summary
+            console.print(Panel(
+                f"[bold]Run #{run['id']}[/bold]\n"
+                f"Timestamp: {run['timestamp']}\n"
+                f"Source: {run['log_source']}\n"
+                f"Events: {run['total_events']:,}\n"
+                f"Critical: {run['critical_count']} | High: {run['high_count']} | "
+                f"Medium: {run['medium_count']} | Low: {run['low_count']}\n"
+                f"ML Anomalies: {run['anomaly_count']}",
+                title="Run Details",
+                border_style="cyan"
+            ))
+
+            # Show violations
+            if violations:
+                console.print(f"\n[bold]Violations ({len(violations)}):[/bold]")
+                for v in violations[:20]:  # Show first 20
+                    severity_color = {"critical": "red", "high": "yellow", "medium": "yellow", "low": "blue"}.get(v['severity'], "white")
+                    console.print(f"  [{severity_color}]{v['severity'].upper()}[/{severity_color}] {v['ip']} - {v['rule_name']}")
+
+                if len(violations) > 20:
+                    console.print(f"  [dim]... and {len(violations) - 20} more[/dim]")
+
+            # Show anomalies
+            if anomalies:
+                console.print(f"\n[bold]Anomalies ({len(anomalies)}):[/bold]")
+                for a in anomalies[:10]:
+                    score_pct = int(a['score'] * 100)
+                    console.print(f"  [magenta]{a['ip']}[/magenta] - Score: {score_pct}% ({a['confidence']})")
+
+        elif action == "compare":
+            if not run_id or not run_id2:
+                console.print("[red]Error: --run and --compare-to required for compare action[/red]")
+                raise typer.Exit(1)
+
+            comparison = db.compare_runs(run_id, run_id2)
+            if "error" in comparison:
+                console.print(f"[red]Error: {comparison['error']}[/red]")
+                raise typer.Exit(1)
+
+            def delta_str(val):
+                if val > 0:
+                    return f"[red]+{val}[/red]"
+                elif val < 0:
+                    return f"[green]{val}[/green]"
+                return "0"
+
+            console.print(Panel(
+                f"[bold]Run #{run_id} → Run #{run_id2}[/bold]\n\n"
+                f"Events: {comparison['old_run']['total_events']:,} → {comparison['new_run']['total_events']:,} ({delta_str(comparison['events_delta'])})\n"
+                f"Critical: {delta_str(comparison['critical_delta'])}\n"
+                f"High: {delta_str(comparison['high_delta'])}\n"
+                f"Medium: {delta_str(comparison['medium_delta'])}\n"
+                f"Low: {delta_str(comparison['low_delta'])}\n\n"
+                f"New IPs: {len(comparison['new_ips'])}\n"
+                f"Gone IPs: {len(comparison['gone_ips'])}\n"
+                f"Persistent: {len(comparison['persistent_ips'])}",
+                title="Run Comparison",
+                border_style="cyan"
+            ))
+
+            if comparison['new_ips']:
+                console.print(f"\n[bold]New offending IPs:[/bold]")
+                for ip in comparison['new_ips'][:10]:
+                    console.print(f"  [red]+ {ip}[/red]")
+
+            if comparison['gone_ips']:
+                console.print(f"\n[bold]No longer seen:[/bold]")
+                for ip in comparison['gone_ips'][:10]:
+                    console.print(f"  [green]- {ip}[/green]")
+
+        elif action == "trend":
+            trend = db.get_trend(days)
+            if not trend:
+                console.print(f"[yellow]No data found for the last {days} days.[/yellow]")
+                return
+
+            table = Table(title=f"Daily Trend (Last {days} Days)", show_lines=False)
+            table.add_column("Date", style="cyan")
+            table.add_column("Runs", style="dim", justify="right")
+            table.add_column("Critical", style="red", justify="right")
+            table.add_column("High", style="yellow", justify="right")
+            table.add_column("Medium", style="yellow", justify="right")
+            table.add_column("Low", style="blue", justify="right")
+            table.add_column("Anomalies", style="magenta", justify="right")
+
+            for day in trend:
+                table.add_row(
+                    day['date'],
+                    str(day['runs']),
+                    str(day['critical']),
+                    str(day['high']),
+                    str(day['medium']),
+                    str(day['low']),
+                    str(day['anomalies']),
+                )
+
+            console.print(table)
+
+        elif action == "top":
+            top_ips = db.get_top_offenders(days, limit)
+            if not top_ips:
+                console.print(f"[yellow]No violations found in the last {days} days.[/yellow]")
+                return
+
+            table = Table(title=f"Top Offending IPs (Last {days} Days)", show_lines=False)
+            table.add_column("Rank", style="dim", justify="right")
+            table.add_column("IP Address", style="cyan")
+            table.add_column("Total", style="white", justify="right")
+            table.add_column("Critical", style="red", justify="right")
+            table.add_column("High", style="yellow", justify="right")
+            table.add_column("Medium", style="yellow", justify="right")
+            table.add_column("Low", style="blue", justify="right")
+
+            for i, ip_data in enumerate(top_ips, 1):
+                table.add_row(
+                    str(i),
+                    ip_data['ip'],
+                    str(ip_data['total']),
+                    str(ip_data['critical']),
+                    str(ip_data['high']),
+                    str(ip_data['medium']),
+                    str(ip_data['low']),
+                )
+
+            console.print(table)
+
+        elif action == "ip":
+            if not ip:
+                console.print("[red]Error: --ip required for ip action[/red]")
+                raise typer.Exit(1)
+
+            ip_history = db.get_ip_history(ip, days)
+
+            console.print(Panel(
+                f"[bold]IP: {ip}[/bold]\n"
+                f"Period: Last {days} days\n\n"
+                f"Total Violations: {ip_history['total_violations']}\n"
+                f"  Critical: {ip_history['violations'].get('critical', 0)}\n"
+                f"  High: {ip_history['violations'].get('high', 0)}\n"
+                f"  Medium: {ip_history['violations'].get('medium', 0)}\n"
+                f"  Low: {ip_history['violations'].get('low', 0)}\n\n"
+                f"ML Anomaly Detections: {ip_history['anomaly_count']}\n"
+                f"Avg Anomaly Score: {ip_history['avg_anomaly_score']:.1%}",
+                title="IP History",
+                border_style="cyan"
+            ))
+
+        elif action == "cleanup":
+            deleted = db.cleanup_old_runs(days)
+            console.print(f"[green]Deleted {deleted} runs older than {days} days.[/green]")
+
+        else:
+            console.print(f"[red]Unknown action: {action}[/red]")
+            console.print("[dim]Valid actions: list, show, compare, trend, top, ip, cleanup[/dim]")
+            raise typer.Exit(1)
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
