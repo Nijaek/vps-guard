@@ -70,11 +70,32 @@ class OutputConfig:
 
 
 @dataclass
+class WatchOutputConfig:
+    """Output configuration for watch mode reports."""
+    directory: str = "~/.vpsguard/reports"
+    formats: list[str] = field(default_factory=lambda: ["markdown", "json"])
+
+
+@dataclass
+class WatchScheduleConfig:
+    """Configuration for watch daemon scheduling."""
+    interval: str = "1h"  # Duration: 5m, 1h, 6h, 24h
+    retention_days: int = 30
+    alerts: dict = field(default_factory=lambda: {
+        "critical_threshold": 1,
+        "high_threshold": 5,
+        "anomaly_threshold": 3
+    })
+
+
+@dataclass
 class VPSGuardConfig:
     """Main configuration container for VPSGuard."""
     rules: RulesConfig = field(default_factory=RulesConfig)
     whitelist_ips: list[str] = field(default_factory=list)
     output: OutputConfig = field(default_factory=OutputConfig)
+    watch_schedule: WatchScheduleConfig = field(default_factory=WatchScheduleConfig)
+    watch_output: WatchOutputConfig = field(default_factory=WatchOutputConfig)
 
 
 def load_config(path: Path | str | None = None) -> VPSGuardConfig:
@@ -169,6 +190,31 @@ def _build_config(data: dict[str, Any]) -> VPSGuardConfig:
             verbosity=output_data.get("verbosity", 1)
         )
 
+    # Load watch configuration
+    if "watch" in data:
+        watch_data = data["watch"]
+
+        if "schedule" in watch_data:
+            schedule = watch_data["schedule"]
+            alerts = schedule.get("alerts", {})
+
+            config.watch_schedule = WatchScheduleConfig(
+                interval=schedule.get("interval", "1h"),
+                retention_days=schedule.get("retention_days", 30),
+                alerts={
+                    "critical_threshold": alerts.get("critical_threshold", 1),
+                    "high_threshold": alerts.get("high_threshold", 5),
+                    "anomaly_threshold": alerts.get("anomaly_threshold", 3)
+                }
+            )
+
+        if "output" in watch_data:
+            output = watch_data["output"]
+            config.watch_output = WatchOutputConfig(
+                directory=output.get("directory", "~/.vpsguard/reports"),
+                formats=output.get("formats", ["markdown", "json"])
+            )
+
     return config
 
 
@@ -227,6 +273,18 @@ def validate_config(config: VPSGuardConfig) -> list[str]:
         warnings.append(f"output.format '{config.output.format}' is not valid (use 'terminal' or 'json')")
     if not (0 <= config.output.verbosity <= 3):
         warnings.append(f"output.verbosity must be 0-3, got {config.output.verbosity}")
+
+    # Validate watch schedule config
+    valid_intervals = {"5m", "15m", "30m", "1h", "6h", "12h", "24h"}
+    if config.watch_schedule.interval not in valid_intervals:
+        warnings.append(f"watch.schedule.interval '{config.watch_schedule.interval}' must be one of: {', '.join(sorted(valid_intervals))}")
+
+    if config.watch_schedule.retention_days < 1:
+        warnings.append("watch.schedule.retention_days must be >= 1")
+
+    for threshold_name, threshold_value in config.watch_schedule.alerts.items():
+        if threshold_value < 0:
+            warnings.append(f"watch.schedule.alerts.{threshold_name} must be >= 0")
 
     # Validate whitelist IPs (basic check)
     for ip in config.whitelist_ips:
