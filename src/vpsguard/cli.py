@@ -716,191 +716,148 @@ def analyze(
 
 @app.command()
 def watch(
-    file_paths: List[str] = typer.Argument(..., help="Path(s) to log file(s) to monitor"),
-    interval: int = typer.Option(300, "--interval", "-i", help="Check interval in seconds (default: 300)"),
-    config: Optional[str] = typer.Option(None, "--config", help="Path to TOML config file"),
-    input_format: Optional[str] = typer.Option(None, "--input-format", help="Input format: auth.log, secure, journald, nginx, syslog"),
-    model: str = typer.Option("vpsguard_model.pkl", "--model", help="Path to ML model file"),
-    with_ml: bool = typer.Option(False, "--with-ml", help="Enable ML detection"),
-    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Verbosity level"),
-    format: str = typer.Option("terminal", "--format", help="Output format: terminal, markdown, json, html"),
-    output_dir: Optional[str] = typer.Option(None, "--output-dir", help="Directory to save periodic reports"),
+    log_file: str = typer.Argument(..., help="Path to log file to monitor"),
+    interval: Optional[str] = typer.Option(None, "--interval", "-i", help="Schedule interval (e.g., 5m, 1h)"),
+    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in foreground (don't daemonize)"),
+    once: bool = typer.Option(False, "--once", help="Run single analysis cycle then exit"),
+    status: bool = typer.Option(False, "--status", help="Show daemon status"),
+    stop: bool = typer.Option(False, "--stop", help="Stop running daemon"),
+    config: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config file"),
+    log_format: Optional[str] = typer.Option(None, "--format", help="Log format: auth.log, secure, journald, nginx, syslog"),
 ):
-    """Watch log files and run periodic analysis.
+    """Run scheduled batch analysis on log file.
 
-    Continuously monitors log files and runs analysis at specified intervals.
-    Useful for scheduled security checks and monitoring.
+    Monitors log file at configured intervals, running full analysis each time.
+    Persists state between runs for incremental parsing.
 
-    Example:
-        vpsguard watch /var/log/auth.log --interval 600
-        vpsguard watch /var/log/auth.log /var/log/nginx/access.log -i 300 --with-ml
+    Examples:
+        vpsguard watch /var/log/auth.log --foreground
+        vpsguard watch /var/log/auth.log --once
+        vpsguard watch /var/log/auth.log --status
+        vpsguard watch /var/log/auth.log --stop
+        vpsguard watch /var/log/auth.log --interval 30m
     """
     import time
-    from datetime import datetime, timezone
-    from pathlib import Path
+    import os
+    from datetime import datetime
     from vpsguard.config import load_config
-    from vpsguard.rules.engine import RuleEngine
-    from vpsguard.reporters import get_reporter
-    from vpsguard.models.events import AnalysisReport, Severity, AuthEvent
+    from vpsguard.daemon import DaemonManager
+    from vpsguard.watch import WatchDaemon
 
-    try:
-        # Validate files exist
-        for file_path in file_paths:
-            if file_path != "-":
-                path = Path(file_path)
-                if not path.exists():
-                    console.print(f"[red]Error: File not found: {file_path}[/red]")
-                    raise typer.Exit(1)
+    # Load config
+    cfg = load_config(config) if config else load_config()
 
-        # Create output directory if specified
-        if output_dir:
-            output_path = Path(output_dir)
-            output_path.mkdir(parents=True, exist_ok=True)
-            console.print(f"[dim]Reports will be saved to: {output_dir}[/dim]")
+    # Get interval from CLI or config
+    watch_interval = interval or cfg.watch_schedule.interval
 
-        # Load configuration once
-        try:
-            vps_config = load_config(config)
-            if config:
-                console.print(f"[dim]Loaded config from: {config}[/dim]")
-            else:
-                console.print(f"[dim]Using default configuration[/dim]")
-        except (FileNotFoundError, ValueError) as e:
-            console.print(f"[red]Error: {e}[/red]")
-            raise typer.Exit(1)
+    # Handle status command
+    if status:
+        daemon_manager = DaemonManager()
+        pid = daemon_manager.get_running_pid()
+        if pid:
+            console.print(f"[green]Watch daemon running (PID {pid})[/green]")
+            # Show state from DB
+            from vpsguard.history import HistoryDB
+            db = HistoryDB()
+            state = db.get_watch_state(log_file)
+            if state:
+                console.print(f"  Last run: {state.last_run_time}")
+                console.print(f"  Total runs: {state.run_count}")
+                console.print(f"  Byte offset: {state.byte_offset}")
+        else:
+            console.print("[yellow]No watch daemon running[/yellow]")
+        raise typer.Exit()
 
-        # Load ML model if requested
-        ml_engine = None
-        if with_ml:
-            from vpsguard.ml.engine import MLEngine
-            model_path = Path(model)
-            if model_path.exists():
-                console.print(f"[dim]Loading ML model from {model_path}...[/dim]")
-                ml_engine = MLEngine()
-                ml_engine.load(model_path)
-                console.print(f"[green]ML model loaded successfully[/green]")
-            else:
-                console.print(f"[yellow]Warning: ML model not found at {model_path}[/yellow]")
-                console.print(f"[yellow]Running without ML detection[/yellow]")
+    # Handle stop command
+    if stop:
+        daemon_manager = DaemonManager()
+        pid = daemon_manager.get_running_pid()
+        if pid:
+            import signal
+            try:
+                os.kill(pid, signal.SIGTERM)
+                console.print(f"[green]Sent shutdown signal to daemon (PID {pid})[/green]")
+            except OSError as e:
+                console.print(f"[red]Error stopping daemon: {e}[/red]")
+        else:
+            console.print("[yellow]No watch daemon running[/yellow]")
+        raise typer.Exit()
 
-        console.print(f"\n[bold cyan]Starting watch mode[/bold cyan]")
-        console.print(f"[dim]Monitoring: {', '.join(file_paths)}[/dim]")
-        console.print(f"[dim]Interval: {interval} seconds[/dim]")
-        console.print(f"[dim]Press Ctrl+C to stop[/dim]\n")
+    # Validate log file exists
+    log_path = Path(log_file)
+    if not log_path.exists():
+        console.print(f"[red]Error: Log file not found: {log_file}[/red]")
+        raise typer.Exit(1)
+
+    # Create daemon instance
+    daemon = WatchDaemon(
+        log_path=str(log_path),
+        interval=watch_interval,
+        log_format=log_format
+    )
+
+    # Run once mode (for testing/debug)
+    if once:
+        console.print(f"[cyan]Running single analysis cycle on {log_file}[/cyan]")
+        result = daemon.run_once(cfg)
+        console.print(f"[green]Analysis complete: {result['events']} events, {result['violations']} violations[/green]")
+        if result['findings_counts']:
+            console.print(f"  Critical: {result['findings_counts'].get('critical', 0)}")
+            console.print(f"  High: {result['findings_counts'].get('high', 0)}")
+            console.print(f"  Medium: {result['findings_counts'].get('medium', 0)}")
+            console.print(f"  Low: {result['findings_counts'].get('low', 0)}")
+        raise typer.Exit()
+
+    # Foreground mode (don't daemonize)
+    if foreground:
+        console.print(f"[cyan]Running in foreground mode (interval: {watch_interval})[/cyan]")
+        console.print(f"[dim]Monitoring: {log_file}[/dim]")
+        console.print("[yellow]Press Ctrl+C to stop[/yellow]\n")
 
         run_count = 0
-        while True:
-            run_count += 1
-            run_time = datetime.now(timezone.utc)
+        try:
+            while not daemon.daemon_manager.shutdown_requested:
+                run_count += 1
+                result = daemon.run_once(cfg)
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                console.print(f"[green]{timestamp} - Run #{run_count}: {result['events']} events, {result['violations']} violations[/green]")
 
-            console.print(f"[bold]═══ Run #{run_count} at {run_time.strftime('%Y-%m-%d %H:%M:%S UTC')} ═══[/bold]")
+                # Sleep until next run
+                time.sleep(daemon.interval_seconds)
 
-            # Collect events from all files
-            all_events: List[AuthEvent] = []
-            log_sources: List[str] = []
+        except KeyboardInterrupt:
+            console.print(f"\n[yellow]Shutting down...[/yellow]")
+            console.print(f"[dim]Total runs: {run_count}[/dim]")
+        raise typer.Exit()
 
-            for file_path in file_paths:
-                path = Path(file_path)
-                content = path.read_text(encoding="utf-8")
-                filename = path.name
-                log_source = str(path)
-                log_sources.append(log_source)
-
-                # Auto-detect format
-                detected_format = input_format
-                if detected_format is None:
-                    detected_format = _auto_detect_format(content, filename)
-
-                # Parse
-                parser = get_parser(detected_format)
-                parsed = parser.parse(content)
-                all_events.extend(parsed.events)
-
-            console.print(f"[dim]Parsed {len(all_events)} events from {len(file_paths)} file(s)[/dim]")
-
-            # Run rule engine
-            engine = RuleEngine(vps_config)
-            rule_output = engine.evaluate(all_events)
-
-            # Filter violations by verbosity
-            filtered_violations = []
-            for violation in rule_output.violations:
-                if verbose == 0:
-                    if violation.severity in [Severity.CRITICAL, Severity.HIGH]:
-                        filtered_violations.append(violation)
-                elif verbose == 1:
-                    if violation.severity in [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM]:
-                        filtered_violations.append(violation)
-                else:
-                    filtered_violations.append(violation)
-
-            # Run ML if available
-            anomalies = []
-            baseline_drift = None
-            if ml_engine:
-                try:
-                    anomalies = ml_engine.detect(all_events, score_threshold=0.6)
-                    baseline_drift = ml_engine.detect_drift(all_events, threshold=2.0)
-                except Exception as e:
-                    console.print(f"[yellow]ML detection error: {e}[/yellow]")
-
-            # Build report
-            combined_log_source = ", ".join(log_sources) if len(log_sources) <= 3 else f"{len(log_sources)} files"
-            analysis_report = AnalysisReport(
-                timestamp=run_time,
-                log_source=combined_log_source,
-                total_events=len(all_events),
-                rule_violations=filtered_violations,
-                anomalies=anomalies,
-                baseline_drift=baseline_drift,
-                summary=None,
-            )
-
-            # Count findings
-            critical = sum(1 for v in filtered_violations if v.severity == Severity.CRITICAL)
-            high = sum(1 for v in filtered_violations if v.severity == Severity.HIGH)
-            medium = sum(1 for v in filtered_violations if v.severity == Severity.MEDIUM)
-            low = sum(1 for v in filtered_violations if v.severity == Severity.LOW)
-
-            # Print summary
-            if critical > 0:
-                console.print(f"[bold red]CRITICAL: {critical}[/bold red]", end="  ")
-            if high > 0:
-                console.print(f"[bold yellow]HIGH: {high}[/bold yellow]", end="  ")
-            if medium > 0:
-                console.print(f"[yellow]MEDIUM: {medium}[/yellow]", end="  ")
-            if low > 0:
-                console.print(f"[blue]LOW: {low}[/blue]", end="  ")
-            if anomalies:
-                console.print(f"[magenta]ML Anomalies: {len(anomalies)}[/magenta]", end="")
-
-            if critical == 0 and high == 0 and medium == 0 and low == 0 and not anomalies:
-                console.print(f"[green]No findings[/green]", end="")
-
-            console.print()  # Newline
-
-            # Save report if output_dir specified
-            if output_dir:
-                reporter = get_reporter(format)
-                timestamp_str = run_time.strftime('%Y%m%d_%H%M%S')
-                ext = "html" if format == "html" else ("json" if format == "json" else "md" if format == "markdown" else "txt")
-                report_file = Path(output_dir) / f"vpsguard_report_{timestamp_str}.{ext}"
-                reporter.generate_to_file(analysis_report, str(report_file))
-                console.print(f"[dim]Report saved: {report_file}[/dim]")
-
-            # Wait for next interval
-            console.print(f"[dim]Next check in {interval} seconds...[/dim]\n")
-            time.sleep(interval)
-
-    except KeyboardInterrupt:
-        console.print(f"\n[yellow]Watch mode stopped by user[/yellow]")
-        console.print(f"[dim]Total runs: {run_count}[/dim]")
-        raise typer.Exit(0)
-    except Exception as e:
+    # Daemon mode
+    try:
+        daemon.daemon_manager.start()
+    except RuntimeError as e:
         console.print(f"[red]Error: {e}[/red]")
-        import traceback
-        traceback.print_exc()
         raise typer.Exit(1)
+
+    console.print(f"[green]Watch daemon started[/green]")
+    console.print(f"  Monitoring: {log_file}")
+    console.print(f"  Interval: {watch_interval}")
+    console.print(f"  PID: {os.getpid()}")
+    console.print(f"\n[cyan]Use 'vpsguard watch {log_file} --status' to check status[/cyan]")
+    console.print(f"[cyan]Use 'vpsguard watch {log_file} --stop' to stop daemon[/cyan]")
+
+    # Main loop
+    import logging
+    logger = logging.getLogger(__name__)
+
+    while not daemon.daemon_manager.shutdown_requested:
+        try:
+            daemon.run_once(cfg)
+            time.sleep(daemon.interval_seconds)
+        except Exception as e:
+            logger.error(f"Error in watch loop: {e}")
+            time.sleep(60)  # Wait before retry
+
+    # Cleanup
+    daemon.daemon_manager.stop()
 
 
 @app.command()
