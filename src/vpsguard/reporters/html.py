@@ -62,6 +62,7 @@ class HTMLReporter:
 <body>
     <div class="container">
         {self._generate_header(report)}
+        {self._generate_filter_controls()}
         {self._generate_summary(report, counts)}
         {self._generate_findings(violations_by_severity)}
         {self._generate_anomalies(report.anomalies)}
@@ -356,6 +357,63 @@ class HTMLReporter:
         text-decoration: none;
     }
 
+    /* Filter Controls */
+    .filter-controls {
+        background: rgba(30, 41, 59, 0.8);
+        padding: 1rem 1.5rem;
+        border-radius: 0.75rem;
+        margin-bottom: 2rem;
+        border: 1px solid rgba(148, 163, 184, 0.1);
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .filter-controls label {
+        color: #cbd5e1;
+        font-weight: 500;
+    }
+
+    .filter-controls select {
+        background: #1e293b;
+        color: #e2e8f0;
+        border: 1px solid #475569;
+        padding: 0.5rem 1rem;
+        border-radius: 0.375rem;
+    }
+
+    .filter-controls input {
+        background: #1e293b;
+        color: #e2e8f0;
+        border: 1px solid #475569;
+        padding: 0.5rem 1rem;
+        border-radius: 0.375rem;
+        width: 180px;
+    }
+
+    .filter-controls input::placeholder {
+        color: #64748b;
+    }
+
+    .filter-stats {
+        color: #94a3b8;
+        font-size: 0.875rem;
+        margin-left: auto;
+    }
+
+    .filter-stats strong {
+        color: #60a5fa;
+    }
+
+    .finding {
+        transition: opacity 0.2s;
+    }
+
+    .finding.hidden {
+        display: none;
+    }
+
     /* Responsive */
     @media (max-width: 768px) {
         .container {
@@ -373,8 +431,73 @@ class HTMLReporter:
         .finding-detail .label {
             margin-bottom: -0.25rem;
         }
+
+        .filter-controls {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .filter-controls input {
+            width: 100%;
+        }
+
+        .filter-stats {
+            margin-left: 0;
+            text-align: center;
+        }
     }
-</style>"""
+</style>
+<script>
+function filterFindings() {
+    const severityFilter = document.getElementById('severity-filter').value;
+    const ipFilter = document.getElementById('ip-filter').value.toLowerCase();
+    const timeFilter = document.getElementById('time-filter').value;
+
+    const findings = document.querySelectorAll('.finding');
+    let visibleCount = 0;
+
+    findings.forEach(finding => {
+        const severity = finding.getAttribute('data-severity');
+        const ip = (finding.getAttribute('data-ip') || '').toLowerCase();
+        const time = finding.getAttribute('data-time');
+
+        let show = true;
+
+        if (severityFilter && severity !== severityFilter) {
+            show = false;
+        }
+
+        if (ipFilter && !ip.includes(ipFilter)) {
+            show = false;
+        }
+
+        if (timeFilter && time) {
+            const findingTime = new Date(time);
+            const now = new Date();
+            const cutoff = new Date(now - timeFilter * 60 * 60 * 1000);
+            if (findingTime < cutoff) {
+                show = false;
+            }
+        }
+
+        if (show) {
+            finding.classList.remove('hidden');
+            visibleCount++;
+        } else {
+            finding.classList.add('hidden');
+        }
+    });
+
+    document.getElementById('visible-count').textContent = visibleCount;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('severity-filter').addEventListener('change', filterFindings);
+    document.getElementById('ip-filter').addEventListener('input', filterFindings);
+    document.getElementById('time-filter').addEventListener('change', filterFindings);
+    filterFindings();
+});
+</script>"""
 
     def _generate_header(self, report: AnalysisReport) -> str:
         """Generate the report header."""
@@ -387,6 +510,36 @@ class HTMLReporter:
                 <span class="meta-item"><strong>Source:</strong> {self._escape_html(report.log_source)}</span>
                 <span class="meta-item"><strong>Events Scanned:</strong> {report.total_events:,}</span>
             </div>
+        </div>"""
+
+    def _generate_filter_controls(self) -> str:
+        """Generate filter control panel."""
+        return """
+        <div class="filter-controls">
+            <label for="severity-filter">Severity:</label>
+            <select id="severity-filter">
+                <option value="">All</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+            </select>
+
+            <label for="ip-filter">IP Address:</label>
+            <input type="text" id="ip-filter" placeholder="Filter by IP...">
+
+            <label for="time-filter">Last:</label>
+            <select id="time-filter">
+                <option value="">All time</option>
+                <option value="1">Last 1 hour</option>
+                <option value="6">Last 6 hours</option>
+                <option value="24">Last 24 hours</option>
+                <option value="168">Last 7 days</option>
+            </select>
+
+            <span class="filter-stats">
+                Showing: <strong id="visible-count">0</strong> findings
+            </span>
         </div>"""
 
     def _generate_summary(self, report: AnalysisReport, counts: dict) -> str:
@@ -490,7 +643,10 @@ class HTMLReporter:
             </div>"""
 
         return f"""
-        <div class="finding">
+        <div class="finding"
+             data-severity="{severity_class}"
+             data-ip="{self._escape_html(violation.ip)}"
+             data-time="{violation.timestamp.isoformat()}">
             <div class="finding-header {severity_class}">
                 <span class="finding-title">{self._escape_html(violation.rule_name)}</span>
                 <span class="finding-badge {severity_class}">{violation.severity.value.upper()}</span>
