@@ -250,16 +250,10 @@ class WatchDaemon:
             return {"events": 0, "violations": 0, "anomalies": 0, "findings_counts": {}}
 
         # Run rules
-        rule_engine = RuleEngine(config.rules, config.whitelist_ips)
-        violations = []
-        clean_events = []
-
-        for event in events:
-            event_violations = rule_engine.check_event(event)
-            if event_violations:
-                violations.extend(event_violations)
-            else:
-                clean_events.append(event)
+        rule_engine = RuleEngine(config)
+        output = rule_engine.evaluate(events)
+        violations = output.violations
+        clean_events = output.clean_events
 
         # Run ML if model available (optional)
         anomalies = []
