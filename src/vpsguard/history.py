@@ -3,11 +3,11 @@
 import sqlite3
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from dataclasses import asdict
 
-from vpsguard.models.events import AnalysisReport, RuleViolation, AnomalyResult, Severity, Confidence
+from vpsguard.models.events import AnalysisReport, RuleViolation, AnomalyResult, Severity, Confidence, WatchState
 
 
 class HistoryDB:
@@ -76,11 +76,25 @@ class HistoryDB:
                 )
             """)
 
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS watch_state (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    log_path TEXT UNIQUE NOT NULL,
+                    inode INTEGER NOT NULL,
+                    byte_offset INTEGER NOT NULL,
+                    last_run_time TEXT NOT NULL,
+                    run_count INTEGER NOT NULL,
+                    last_findings_counts TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
             # Create indexes for common queries
             conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_timestamp ON runs(timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_violations_ip ON violations(ip)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_violations_severity ON violations(severity)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_anomalies_ip ON anomalies(ip)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_watch_state_path ON watch_state(log_path)")
 
             conn.commit()
 
@@ -153,6 +167,71 @@ class HistoryDB:
 
             conn.commit()
             return run_id
+
+    def save_watch_state(self, state: 'WatchState') -> int:
+        """Save or update watch daemon state.
+
+        Args:
+            state: WatchState instance to persist.
+
+        Returns:
+            The row ID of the saved/updated record.
+        """
+        findings_json = json.dumps(state.last_findings_counts)
+        updated_at = datetime.now(timezone.utc).isoformat()
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                INSERT INTO watch_state (log_path, inode, byte_offset, last_run_time, run_count, last_findings_counts, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(log_path) DO UPDATE SET
+                    inode = excluded.inode,
+                    byte_offset = excluded.byte_offset,
+                    last_run_time = excluded.last_run_time,
+                    run_count = excluded.run_count,
+                    last_findings_counts = excluded.last_findings_counts,
+                    updated_at = excluded.updated_at
+            """, (
+                state.log_path,
+                state.inode,
+                state.byte_offset,
+                state.last_run_time.isoformat(),
+                state.run_count,
+                findings_json,
+                updated_at
+            ))
+
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_watch_state(self, log_path: str) -> Optional['WatchState']:
+        """Get watch state for a specific log path.
+
+        Args:
+            log_path: Path to the log file.
+
+        Returns:
+            WatchState instance or None if not found.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM watch_state
+                WHERE log_path = ?
+            """, (log_path,))
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            return WatchState(
+                log_path=row['log_path'],
+                inode=row['inode'],
+                byte_offset=row['byte_offset'],
+                last_run_time=datetime.fromisoformat(row['last_run_time']),
+                run_count=row['run_count'],
+                last_findings_counts=json.loads(row['last_findings_counts'])
+            )
 
     def get_recent_runs(self, limit: int = 10) -> list[dict]:
         """Get recent analysis runs.

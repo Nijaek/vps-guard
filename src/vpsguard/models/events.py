@@ -82,3 +82,17 @@ class AnalysisReport:
     anomalies: list[AnomalyResult]
     baseline_drift: Optional[dict] = None
     summary: Optional[dict] = None
+
+
+@dataclass
+class WatchState:
+    """Persistent state for watch daemon tracking.
+
+    Tracks where we left off in the log file to enable incremental parsing.
+    """
+    log_path: str                      # File being monitored
+    inode: int                         # File inode (detect log rotation)
+    byte_offset: int                   # Last read position
+    last_run_time: datetime            # When we last ran analysis
+    run_count: int                     # Total analysis runs
+    last_findings_counts: dict         # {severity: count} from last run
