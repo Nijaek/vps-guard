@@ -60,6 +60,8 @@ python -m vpsguard.cli analyze test.log -v
 | `init` | Create a default configuration file |
 | `train` | Train ML model on baseline log data |
 | `analyze` | Run security analysis (rules + ML) |
+| `watch` | Continuous monitoring with scheduled batch analysis |
+| `history` | View analysis history |
 
 ### Parse Logs
 
@@ -165,6 +167,35 @@ python -m vpsguard.cli analyze /var/log/auth.log --with-ml
 python -m vpsguard.cli analyze /var/log/auth.log --with-ml --model mymodel.pkl
 ```
 
+### Watch Logs (Continuous Monitoring)
+
+```bash
+# Start watching a log file (daemon mode)
+vpsguard watch /var/log/auth.log
+
+# Run in foreground (for testing/debug)
+vpsguard watch /var/log/auth.log --foreground
+
+# Run single analysis cycle
+vpsguard watch /var/log/auth.log --once
+
+# Check if daemon is running
+vpsguard watch /var/log/auth.log --status
+
+# Stop the daemon
+vpsguard watch /var/log/auth.log --stop
+
+# Custom interval
+vpsguard watch /var/log/auth.log --interval 30m
+```
+
+**Watch mode features:**
+
+- Incremental parsing — only processes new log entries since last run
+- Log rotation detection — automatically detects when logs are rotated
+- State persistence — remembers position across daemon restarts
+- Configurable intervals — run analysis every 5 minutes to 24 hours
+
 ## Configuration
 
 Create a `vpsguard.toml` file to customize detection rules:
@@ -194,6 +225,20 @@ ips = ["192.168.1.1", "10.0.0.1"]
 [output]
 format = "terminal"     # terminal, json, markdown
 verbosity = 1           # 0=critical/high, 1=+medium, 2=all
+
+# Watch daemon configuration
+[watch.schedule]
+interval = "1h"         # 5m, 15m, 30m, 1h, 6h, 12h, 24h
+retention_days = 30     # How long to keep analysis history
+
+[watch.schedule.alerts]
+critical_threshold = 1  # Alert if 1+ new critical findings
+high_threshold = 5      # Alert if 5+ new high findings
+anomaly_threshold = 3   # Alert if 3+ new anomalies
+
+[watch.output]
+directory = "~/.vpsguard/reports"
+formats = ["markdown", "json", "html"]
 ```
 
 ## Detection Rules
@@ -277,12 +322,11 @@ vpsguard/
 
 ## What VPSGuard is NOT
 
-- **Not a real-time daemon** — use fail2ban for that
-- **Not an IP blocker** — use fail2ban for that
+- **Not a real-time blocker** — use fail2ban for immediate IP blocking
 - **Not a cloud/SaaS tool** — runs fully local
 - **Not a complex UI** — CLI is the product
 
-VPSGuard is a batch analysis tool for security review and forensics.
+VPSGuard is a batch analysis tool for security review, forensics, and scheduled monitoring.
 
 ## License
 
