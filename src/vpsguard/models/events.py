@@ -33,6 +33,7 @@ class AuthEvent:
     port: Optional[int] = None
     pid: Optional[int] = None
     service: Optional[str] = None
+    log_source: Optional[str] = None  # Source file/type for multi-log correlation
 
 @dataclass
 class ParsedLog:
@@ -50,6 +51,19 @@ class RuleViolation:
     timestamp: datetime
     details: dict
     affected_events: list[AuthEvent]
+
+    @property
+    def log_sources(self) -> list[str]:
+        """Extract unique log sources from affected events.
+
+        Returns:
+            Sorted list of unique log source names.
+        """
+        sources = set()
+        for event in self.affected_events:
+            if event.log_source:
+                sources.add(event.log_source)
+        return sorted(sources)
 
 @dataclass
 class RuleEngineOutput:

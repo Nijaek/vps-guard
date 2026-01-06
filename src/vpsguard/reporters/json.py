@@ -111,6 +111,7 @@ class JSONReporter:
             "description": violation.description,
             "details": violation.details,
             "affected_events_count": len(violation.affected_events),
+            "log_sources": violation.log_sources,
         }
 
         # Add geo info if available

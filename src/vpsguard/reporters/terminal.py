@@ -215,6 +215,12 @@ class TerminalReporter:
         details_text.append(f"Severity: ", style="bold")
         details_text.append(f"{violation.severity.value.upper()}\n", style=color)
 
+        # Show log sources if multiple (multi-log correlation)
+        sources = violation.log_sources
+        if len(sources) > 1:
+            details_text.append(f"Sources: ", style="bold")
+            details_text.append(f"{', '.join(sources)}\n", style="magenta")
+
         # Description
         details_text.append(f"\n{violation.description}\n", style="white")
 

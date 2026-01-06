@@ -630,11 +630,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 <span class="value">{self._escape_html(str(geo))}</span>
             </div>"""
 
+        # Show log sources if multiple (multi-log correlation)
+        sources = violation.log_sources
+        sources_html = ""
+        if len(sources) > 1:
+            sources_html = f"""
+            <div class="finding-detail">
+                <span class="label">Log Sources:</span>
+                <span class="value" style="color: #a78bfa;">{self._escape_html(', '.join(sources))}</span>
+            </div>"""
+
         details_html = f"""
             <div class="finding-detail">
                 <span class="label">IP Address:</span>
                 <span class="value ip">{ip_display}</span>
-            </div>{location_html}
+            </div>{location_html}{sources_html}
             <div class="finding-detail">
                 <span class="label">Timestamp:</span>
                 <span class="value">{violation.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</span>

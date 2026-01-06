@@ -8,6 +8,7 @@ from vpsguard.rules.breach import BreachDetectionRule
 from vpsguard.rules.quiet_hours import QuietHoursRule
 from vpsguard.rules.invalid_user import InvalidUserRule
 from vpsguard.rules.root_login import RootLoginRule
+from vpsguard.rules.multi_vector import MultiVectorRule
 
 
 class RuleEngine:
@@ -29,7 +30,7 @@ class RuleEngine:
     
     def _initialize_rules(self) -> list[Rule]:
         """Create rule instances from config.
-        
+
         Returns:
             List of initialized rules (only enabled ones will run).
         """
@@ -39,6 +40,7 @@ class RuleEngine:
             QuietHoursRule(self.config.rules.quiet_hours),
             InvalidUserRule(self.config.rules.invalid_user),
             RootLoginRule(self.config.rules.root_login),
+            MultiVectorRule(self.config.rules.multi_vector),
         ]
         return rules
     

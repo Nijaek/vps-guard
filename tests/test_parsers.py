@@ -13,6 +13,7 @@ from vpsguard.parsers import (
     SecureLogParser,
     JournaldParser,
     get_parser,
+    enrich_with_source,
 )
 from vpsguard.models.events import EventType
 
@@ -534,3 +535,74 @@ class TestParserProtocol:
             for method_name in required_methods:
                 assert hasattr(parser, method_name)
                 assert callable(getattr(parser, method_name))
+
+
+class TestEnrichWithSource:
+    """Tests for enrich_with_source function."""
+
+    def test_enrich_with_explicit_source(self):
+        """Test enriching parsed log with explicit source."""
+        parser = AuthLogParser()
+        log_line = "Jan 15 03:12:47 server sshd[1234]: Failed password for root from 192.168.1.100 port 22345 ssh2"
+        parsed = parser.parse(log_line)
+
+        enriched = enrich_with_source(parsed, source="myserver-auth.log")
+
+        assert len(enriched.events) == 1
+        assert enriched.events[0].log_source == "myserver-auth.log"
+
+    def test_enrich_uses_source_file_basename(self):
+        """Test enriching uses basename of source_file when no explicit source given."""
+        parser = AuthLogParser()
+        log_line = "Jan 15 03:12:47 server sshd[1234]: Failed password for root from 192.168.1.100 port 22345 ssh2"
+
+        # Create a temporary file to get a proper source_file path
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".log") as f:
+            f.write(log_line)
+            temp_path = f.name
+
+        try:
+            parsed = parser.parse_file(temp_path)
+            enriched = enrich_with_source(parsed)
+
+            # Should use basename of source file
+            assert enriched.events[0].log_source == os.path.basename(temp_path)
+        finally:
+            os.unlink(temp_path)
+
+    def test_enrich_uses_format_type_as_fallback(self):
+        """Test enriching uses format_type when no source_file."""
+        parser = AuthLogParser()
+        log_line = "Jan 15 03:12:47 server sshd[1234]: Failed password for root from 192.168.1.100 port 22345 ssh2"
+        parsed = parser.parse(log_line)
+
+        # No explicit source and no source_file set
+        enriched = enrich_with_source(parsed)
+
+        # Should fallback to format_type
+        assert enriched.events[0].log_source == parsed.format_type
+
+    def test_enrich_all_events(self):
+        """Test that all events are enriched."""
+        parser = AuthLogParser()
+        log_content = """Jan 15 03:12:47 server sshd[1234]: Failed password for root from 192.168.1.100 port 22345 ssh2
+Jan 15 03:12:48 server sshd[1235]: Failed password for admin from 192.168.1.101 port 22346 ssh2
+Jan 15 03:12:49 server sshd[1236]: Accepted password for ubuntu from 10.0.0.5 port 54321 ssh2"""
+
+        parsed = parser.parse(log_content)
+        enriched = enrich_with_source(parsed, source="secure")
+
+        assert len(enriched.events) == 3
+        for event in enriched.events:
+            assert event.log_source == "secure"
+
+    def test_enrich_returns_same_object(self):
+        """Test that enrich_with_source returns the same ParsedLog object."""
+        parser = AuthLogParser()
+        log_line = "Jan 15 03:12:47 server sshd[1234]: Failed password for root from 192.168.1.100 port 22345 ssh2"
+        parsed = parser.parse(log_line)
+
+        enriched = enrich_with_source(parsed, source="test")
+
+        # Should be the same object (modified in place)
+        assert enriched is parsed

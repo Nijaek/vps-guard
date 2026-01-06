@@ -29,6 +29,7 @@ class FeatureExtractor:
         "has_success_after_failures",
         "same_target_ips_5min",
         "username_entropy",
+        "attack_vectors",  # Number of distinct log sources (multi-log correlation)
     ]
 
     def extract(self, events: list[AuthEvent]) -> list[FeatureSet]:
@@ -126,6 +127,9 @@ class FeatureExtractor:
         # Feature 9: Username entropy (enumeration detection)
         username_entropy = self._calculate_username_entropy(ip_events)
 
+        # Feature 10: Attack vectors (distinct log sources for multi-log correlation)
+        attack_vectors = self._calculate_attack_vectors(ip_events)
+
         return np.array([
             attempts_per_hour,
             unique_usernames,
@@ -136,6 +140,7 @@ class FeatureExtractor:
             has_success_after_failures,
             same_target_ips_5min,
             username_entropy,
+            attack_vectors,
         ], dtype=np.float64)
 
     def _calculate_max_failure_streak(self, events: list[AuthEvent]) -> float:
@@ -266,3 +271,22 @@ class FeatureExtractor:
                 entropy -= probability * np.log2(probability)
 
         return entropy
+
+    def _calculate_attack_vectors(self, events: list[AuthEvent]) -> float:
+        """Count distinct log sources for multi-log correlation.
+
+        Multiple attack vectors (appearing in multiple log sources) indicates
+        a more sophisticated attack targeting different services.
+
+        Args:
+            events: List of events for one IP.
+
+        Returns:
+            Number of distinct log sources.
+        """
+        sources = set()
+        for event in events:
+            if event.log_source:
+                sources.add(event.log_source)
+
+        return float(len(sources))

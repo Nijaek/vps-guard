@@ -15,6 +15,7 @@ from vpsguard.config import (
     QuietHoursConfig,
     InvalidUserConfig,
     RootLoginConfig,
+    MultiVectorConfig,
 )
 from vpsguard.rules import (
     BruteForceRule,
@@ -22,6 +23,7 @@ from vpsguard.rules import (
     QuietHoursRule,
     InvalidUserRule,
     RootLoginRule,
+    MultiVectorRule,
     RuleEngine,
 )
 
@@ -709,8 +711,232 @@ class TestRuleEngine:
         """Test engine handles empty events gracefully."""
         config = VPSGuardConfig()
         engine = RuleEngine(config)
-        
+
         result = engine.evaluate([])
         assert result.violations == []
         assert result.clean_events == []
         assert result.flagged_ips == set()
+
+
+class TestMultiVectorRule:
+    """Test multi-vector attack detection rule."""
+
+    def test_basic_multi_vector_detection(self):
+        """Test detection of IP appearing in multiple log sources."""
+        config = MultiVectorConfig(min_sources=2, min_events_per_source=3)
+        rule = MultiVectorRule(config)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        events = []
+
+        # IP 1.2.3.4 active in auth.log (3 events)
+        for i in range(3):
+            events.append(AuthEvent(
+                timestamp=base_time + timedelta(minutes=i),
+                event_type=EventType.FAILED_LOGIN,
+                ip="1.2.3.4",
+                username="admin",
+                success=False,
+                raw_line="test",
+                log_source="auth.log"
+            ))
+
+        # Same IP 1.2.3.4 active in nginx.log (3 events)
+        for i in range(3):
+            events.append(AuthEvent(
+                timestamp=base_time + timedelta(minutes=10 + i),
+                event_type=EventType.FAILED_LOGIN,
+                ip="1.2.3.4",
+                username="www-data",
+                success=False,
+                raw_line="test",
+                log_source="nginx.log"
+            ))
+
+        violations = rule.evaluate(events)
+        assert len(violations) == 1
+        assert violations[0].ip == "1.2.3.4"
+        assert violations[0].rule_name == "multi_vector"
+        assert violations[0].details["source_count"] == 2
+        assert set(violations[0].details["sources"]) == {"auth.log", "nginx.log"}
+
+    def test_no_violation_below_min_sources(self):
+        """Test no detection when IP only appears in one source."""
+        config = MultiVectorConfig(min_sources=2, min_events_per_source=3)
+        rule = MultiVectorRule(config)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        events = [
+            AuthEvent(
+                timestamp=base_time + timedelta(minutes=i),
+                event_type=EventType.FAILED_LOGIN,
+                ip="1.2.3.4",
+                username="admin",
+                success=False,
+                raw_line="test",
+                log_source="auth.log"
+            )
+            for i in range(10)  # Lots of events but only one source
+        ]
+
+        violations = rule.evaluate(events)
+        assert len(violations) == 0
+
+    def test_no_violation_below_min_events_per_source(self):
+        """Test no detection when source has too few events."""
+        config = MultiVectorConfig(min_sources=2, min_events_per_source=5)
+        rule = MultiVectorRule(config)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        events = []
+
+        # Only 2 events from auth.log (below min_events_per_source=5)
+        for i in range(2):
+            events.append(AuthEvent(
+                timestamp=base_time + timedelta(minutes=i),
+                event_type=EventType.FAILED_LOGIN,
+                ip="1.2.3.4",
+                username="admin",
+                success=False,
+                raw_line="test",
+                log_source="auth.log"
+            ))
+
+        # Only 2 events from nginx.log
+        for i in range(2):
+            events.append(AuthEvent(
+                timestamp=base_time + timedelta(minutes=10 + i),
+                event_type=EventType.FAILED_LOGIN,
+                ip="1.2.3.4",
+                username="admin",
+                success=False,
+                raw_line="test",
+                log_source="nginx.log"
+            ))
+
+        violations = rule.evaluate(events)
+        assert len(violations) == 0
+
+    def test_multiple_ips_multi_vector(self):
+        """Test detection of multiple IPs with multi-vector attacks."""
+        config = MultiVectorConfig(min_sources=2, min_events_per_source=2)
+        rule = MultiVectorRule(config)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        events = []
+
+        # IP 1 in two sources
+        for i in range(2):
+            events.append(AuthEvent(
+                timestamp=base_time + timedelta(minutes=i),
+                event_type=EventType.FAILED_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=False,
+                raw_line="test",
+                log_source="auth.log"
+            ))
+            events.append(AuthEvent(
+                timestamp=base_time + timedelta(minutes=i),
+                event_type=EventType.FAILED_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=False,
+                raw_line="test",
+                log_source="nginx.log"
+            ))
+
+        # IP 2 in three sources
+        for source in ["auth.log", "nginx.log", "syslog"]:
+            for i in range(2):
+                events.append(AuthEvent(
+                    timestamp=base_time + timedelta(minutes=20 + i),
+                    event_type=EventType.FAILED_LOGIN,
+                    ip="2.2.2.2",
+                    username="root",
+                    success=False,
+                    raw_line="test",
+                    log_source=source
+                ))
+
+        violations = rule.evaluate(events)
+        assert len(violations) == 2
+        ips = {v.ip for v in violations}
+        assert ips == {"1.1.1.1", "2.2.2.2"}
+
+        # IP 2 should have 3 sources
+        ip2_violation = [v for v in violations if v.ip == "2.2.2.2"][0]
+        assert ip2_violation.details["source_count"] == 3
+
+    def test_disabled_rule(self):
+        """Test that disabled rule returns no violations."""
+        config = MultiVectorConfig(enabled=False)
+        rule = MultiVectorRule(config)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        events = []
+
+        for source in ["auth.log", "nginx.log"]:
+            for i in range(5):
+                events.append(AuthEvent(
+                    timestamp=base_time + timedelta(minutes=i),
+                    event_type=EventType.FAILED_LOGIN,
+                    ip="1.2.3.4",
+                    username="admin",
+                    success=False,
+                    raw_line="test",
+                    log_source=source
+                ))
+
+        violations = rule.evaluate(events)
+        assert len(violations) == 0
+
+    def test_log_sources_property(self):
+        """Test RuleViolation.log_sources property."""
+        config = MultiVectorConfig(min_sources=2, min_events_per_source=2)
+        rule = MultiVectorRule(config)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        events = []
+
+        for source in ["auth.log", "nginx.log", "secure"]:
+            for i in range(2):
+                events.append(AuthEvent(
+                    timestamp=base_time + timedelta(minutes=i),
+                    event_type=EventType.FAILED_LOGIN,
+                    ip="1.2.3.4",
+                    username="admin",
+                    success=False,
+                    raw_line="test",
+                    log_source=source
+                ))
+
+        violations = rule.evaluate(events)
+        assert len(violations) == 1
+
+        # Test the log_sources property on RuleViolation
+        sources = violations[0].log_sources
+        assert sources == ["auth.log", "nginx.log", "secure"]  # Sorted
+
+    def test_events_without_log_source(self):
+        """Test that events without log_source are gracefully ignored."""
+        config = MultiVectorConfig(min_sources=2, min_events_per_source=2)
+        rule = MultiVectorRule(config)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        events = []
+
+        # Events without log_source
+        for i in range(10):
+            events.append(AuthEvent(
+                timestamp=base_time + timedelta(minutes=i),
+                event_type=EventType.FAILED_LOGIN,
+                ip="1.2.3.4",
+                username="admin",
+                success=False,
+                raw_line="test",
+                log_source=None
+            ))
+
+        violations = rule.evaluate(events)
+        assert len(violations) == 0

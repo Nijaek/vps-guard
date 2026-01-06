@@ -53,6 +53,15 @@ class InvalidUserConfig:
 
 
 @dataclass
+class MultiVectorConfig:
+    """Configuration for multi-vector attack detection rule."""
+    enabled: bool = True
+    min_sources: int = 2  # Minimum log sources IP must appear in
+    min_events_per_source: int = 3  # Minimum events per source to count
+    severity: str = "high"
+
+
+@dataclass
 class RulesConfig:
     """Container for all rule configurations."""
     brute_force: BruteForceConfig = field(default_factory=BruteForceConfig)
@@ -60,6 +69,7 @@ class RulesConfig:
     quiet_hours: QuietHoursConfig = field(default_factory=QuietHoursConfig)
     root_login: RootLoginConfig = field(default_factory=RootLoginConfig)
     invalid_user: InvalidUserConfig = field(default_factory=InvalidUserConfig)
+    multi_vector: MultiVectorConfig = field(default_factory=MultiVectorConfig)
 
 
 @dataclass
@@ -186,6 +196,15 @@ def _build_config(data: dict[str, Any]) -> VPSGuardConfig:
                 severity=iu.get("severity", "medium")
             )
 
+        if "multi_vector" in rules_data:
+            mv = rules_data["multi_vector"]
+            config.rules.multi_vector = MultiVectorConfig(
+                enabled=mv.get("enabled", True),
+                min_sources=mv.get("min_sources", 2),
+                min_events_per_source=mv.get("min_events_per_source", 3),
+                severity=mv.get("severity", "high")
+            )
+
     # Load whitelist
     if "whitelist" in data:
         config.whitelist_ips = data["whitelist"].get("ips", [])
@@ -283,6 +302,15 @@ def validate_config(config: VPSGuardConfig) -> list[str]:
         warnings.append("invalid_user.window_minutes must be >= 1")
     if iu.severity not in ("critical", "high", "medium", "low"):
         warnings.append(f"invalid_user.severity '{iu.severity}' is not valid")
+
+    # Validate multi vector config
+    mv = config.rules.multi_vector
+    if mv.min_sources < 2:
+        warnings.append("multi_vector.min_sources must be >= 2")
+    if mv.min_events_per_source < 1:
+        warnings.append("multi_vector.min_events_per_source must be >= 1")
+    if mv.severity not in ("critical", "high", "medium", "low"):
+        warnings.append(f"multi_vector.severity '{mv.severity}' is not valid")
 
     # Validate output config
     if config.output.format not in ("terminal", "json"):

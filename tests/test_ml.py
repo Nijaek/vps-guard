@@ -194,6 +194,70 @@ class TestFeatureExtractor:
         # Random usernames should have higher entropy
         assert random_fs.features[entropy_idx] > targeted_fs.features[entropy_idx]
 
+    def test_attack_vectors_feature(self):
+        """Test attack_vectors feature (multi-log correlation)."""
+        extractor = FeatureExtractor()
+        start_time = datetime.now()
+
+        # IP 1 appears in multiple log sources
+        multi_source_events = []
+        for source in ["auth.log", "nginx.log", "secure"]:
+            for i in range(3):
+                multi_source_events.append(AuthEvent(
+                    timestamp=start_time + timedelta(seconds=i),
+                    event_type=EventType.FAILED_LOGIN,
+                    ip="192.168.1.1",
+                    username="admin",
+                    success=False,
+                    raw_line=f"line {i}",
+                    log_source=source
+                ))
+
+        # IP 2 appears in only one log source
+        single_source_events = []
+        for i in range(10):
+            single_source_events.append(AuthEvent(
+                timestamp=start_time + timedelta(seconds=i),
+                event_type=EventType.FAILED_LOGIN,
+                ip="192.168.1.2",
+                username="admin",
+                success=False,
+                raw_line=f"line {i}",
+                log_source="auth.log"
+            ))
+
+        # IP 3 has no log_source set
+        no_source_events = []
+        for i in range(5):
+            no_source_events.append(AuthEvent(
+                timestamp=start_time + timedelta(seconds=i),
+                event_type=EventType.FAILED_LOGIN,
+                ip="192.168.1.3",
+                username="admin",
+                success=False,
+                raw_line=f"line {i}",
+                log_source=None
+            ))
+
+        all_events = multi_source_events + single_source_events + no_source_events
+        feature_sets = extractor.extract(all_events)
+
+        attack_vectors_idx = extractor.FEATURE_NAMES.index("attack_vectors")
+
+        # Find feature sets by IP
+        multi_fs = next(fs for fs in feature_sets if fs.ip == "192.168.1.1")
+        single_fs = next(fs for fs in feature_sets if fs.ip == "192.168.1.2")
+        no_source_fs = next(fs for fs in feature_sets if fs.ip == "192.168.1.3")
+
+        # Multi-source IP should have attack_vectors = 3
+        assert multi_fs.features[attack_vectors_idx] == 3.0
+
+        # Single source IP should have attack_vectors = 1
+        assert single_fs.features[attack_vectors_idx] == 1.0
+
+        # IP without log_source should have attack_vectors = 0
+        assert no_source_fs.features[attack_vectors_idx] == 0.0
+
 
 class TestIsolationForestDetector:
     """Test Isolation Forest detector."""
@@ -359,7 +423,7 @@ class TestExplain:
 
     def test_explain_anomaly(self):
         """Test anomaly explanation generation."""
-        features = np.array([50.0, 10.0, 0.95, 12.0, 2.0, 20.0, 1.0, 5.0, 4.5])
+        features = np.array([50.0, 10.0, 0.95, 12.0, 2.0, 20.0, 1.0, 5.0, 4.5, 3.0])
         feature_names = FeatureExtractor.FEATURE_NAMES
 
         baseline = {

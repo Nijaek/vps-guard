@@ -152,6 +152,12 @@ class MarkdownReporter:
 
         lines.append(f"- **Time:** {violation.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"- **Severity:** {violation.severity.value.upper()}")
+
+        # Show log sources if multiple (multi-log correlation)
+        sources = violation.log_sources
+        if len(sources) > 1:
+            lines.append(f"- **Log Sources:** {', '.join(sources)}")
+
         lines.append(f"- **Description:** {violation.description}")
 
         # Additional details

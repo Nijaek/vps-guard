@@ -11,7 +11,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 
-from vpsguard.parsers import get_parser
+from vpsguard.parsers import get_parser, enrich_with_source
 from vpsguard.generators import SyntheticLogGenerator, GeneratorConfig, AttackConfig, AttackProfile
 from vpsguard.models.events import EventType
 
@@ -694,6 +694,9 @@ def analyze(
             if format != "json":
                 console.print(f"[dim]Parsing {log_source}...[/dim]")
             parsed = parser.parse(content)
+
+            # Enrich events with source for multi-log correlation
+            enrich_with_source(parsed, source=log_source)
 
             # Collect events and errors
             all_events.extend(parsed.events)
