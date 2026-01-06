@@ -82,6 +82,7 @@ class AnalysisReport:
     anomalies: list[AnomalyResult]
     baseline_drift: Optional[dict] = None
     summary: Optional[dict] = None
+    geo_data: Optional[dict] = None  # IP -> GeoLocation mapping
 
 
 @dataclass

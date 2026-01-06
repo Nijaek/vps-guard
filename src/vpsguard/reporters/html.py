@@ -64,8 +64,8 @@ class HTMLReporter:
         {self._generate_header(report)}
         {self._generate_filter_controls()}
         {self._generate_summary(report, counts)}
-        {self._generate_findings(violations_by_severity)}
-        {self._generate_anomalies(report.anomalies)}
+        {self._generate_findings(violations_by_severity, report.geo_data)}
+        {self._generate_anomalies(report.anomalies, report.geo_data)}
         {self._generate_drift_warning(report.baseline_drift)}
         {self._generate_footer(report)}
     </div>
@@ -575,7 +575,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         </div>"""
 
-    def _generate_findings(self, violations_by_severity: dict) -> str:
+    def _generate_findings(self, violations_by_severity: dict, geo_data: dict | None = None) -> str:
         """Generate the findings sections."""
         if not any(violations_by_severity.values()):
             return """
@@ -601,7 +601,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if violations:
                 findings_html = ""
                 for v in violations:
-                    findings_html += self._render_finding(v)
+                    findings_html += self._render_finding(v, geo_data)
 
                 sections.append(f"""
                 <div class="section">
@@ -614,15 +614,27 @@ document.addEventListener('DOMContentLoaded', function() {
 
         return "\n".join(sections)
 
-    def _render_finding(self, violation: RuleViolation) -> str:
+    def _render_finding(self, violation: RuleViolation, geo_data: dict | None = None) -> str:
         """Render a single finding card."""
         severity_class = violation.severity.value.lower()
+
+        # IP address with optional geo location
+        ip_display = self._escape_html(violation.ip)
+        location_html = ""
+        if geo_data and violation.ip in geo_data:
+            geo = geo_data[violation.ip]
+            if geo.is_known:
+                location_html = f"""
+            <div class="finding-detail">
+                <span class="label">Location:</span>
+                <span class="value">{self._escape_html(str(geo))}</span>
+            </div>"""
 
         details_html = f"""
             <div class="finding-detail">
                 <span class="label">IP Address:</span>
-                <span class="value ip">{self._escape_html(violation.ip)}</span>
-            </div>
+                <span class="value ip">{ip_display}</span>
+            </div>{location_html}
             <div class="finding-detail">
                 <span class="label">Timestamp:</span>
                 <span class="value">{violation.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</span>
@@ -656,7 +668,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         </div>"""
 
-    def _generate_anomalies(self, anomalies: list) -> str:
+    def _generate_anomalies(self, anomalies: list, geo_data: dict | None = None) -> str:
         """Generate the ML anomalies section."""
         if not anomalies:
             return ""
@@ -666,6 +678,13 @@ document.addEventListener('DOMContentLoaded', function() {
             confidence_color = self.CONFIDENCE_COLORS.get(anomaly.confidence, "#64748b")
             score_percent = int(anomaly.score * 100)
 
+            # Add geo location if available
+            ip_display = self._escape_html(anomaly.ip)
+            if geo_data and anomaly.ip in geo_data:
+                geo = geo_data[anomaly.ip]
+                if geo.is_known:
+                    ip_display += f" <span style='color: #94a3b8;'>({self._escape_html(str(geo))})</span>"
+
             explanations_html = ""
             for exp in anomaly.explanation:
                 explanations_html += f"<li>{self._escape_html(exp)}</li>"
@@ -673,7 +692,7 @@ document.addEventListener('DOMContentLoaded', function() {
             anomalies_html += f"""
             <div class="anomaly">
                 <div class="anomaly-header">
-                    <span class="anomaly-ip">{self._escape_html(anomaly.ip)}</span>
+                    <span class="anomaly-ip">{ip_display}</span>
                     <span class="anomaly-score" style="background: {confidence_color}; color: white;">
                         Score: {score_percent}% ({anomaly.confidence.value.upper()})
                     </span>

@@ -63,7 +63,7 @@ class MarkdownReporter:
         for severity in severity_order:
             violations = violations_by_severity.get(severity, [])
             if violations:
-                lines.extend(self._render_severity_section(severity, violations))
+                lines.extend(self._render_severity_section(severity, violations, report.geo_data))
 
         # If no violations
         if not report.rule_violations:
@@ -98,12 +98,18 @@ class MarkdownReporter:
             grouped[violation.severity].append(violation)
         return grouped
 
-    def _render_severity_section(self, severity: Severity, violations: list[RuleViolation]) -> list[str]:
+    def _render_severity_section(
+        self,
+        severity: Severity,
+        violations: list[RuleViolation],
+        geo_data: dict | None = None
+    ) -> list[str]:
         """Render markdown section for a specific severity level.
 
         Args:
             severity: Severity level.
             violations: List of violations at this severity.
+            geo_data: Optional dict mapping IP to GeoLocation.
 
         Returns:
             List of markdown lines.
@@ -116,15 +122,16 @@ class MarkdownReporter:
 
         # Render each violation
         for violation in violations:
-            lines.extend(self._render_violation(violation))
+            lines.extend(self._render_violation(violation, geo_data))
 
         return lines
 
-    def _render_violation(self, violation: RuleViolation) -> list[str]:
+    def _render_violation(self, violation: RuleViolation, geo_data: dict | None = None) -> list[str]:
         """Render a single violation in markdown.
 
         Args:
             violation: RuleViolation to render.
+            geo_data: Optional dict mapping IP to GeoLocation.
 
         Returns:
             List of markdown lines.
@@ -135,8 +142,14 @@ class MarkdownReporter:
         lines.append(f"### {violation.rule_name}")
         lines.append("")
 
-        # Basic info
-        lines.append(f"- **IP:** {violation.ip}")
+        # Basic info - include geo location if available
+        ip_line = f"- **IP:** {violation.ip}"
+        if geo_data and violation.ip in geo_data:
+            geo = geo_data[violation.ip]
+            if geo.is_known:
+                ip_line += f" ({geo})"
+        lines.append(ip_line)
+
         lines.append(f"- **Time:** {violation.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"- **Severity:** {violation.severity.value.upper()}")
         lines.append(f"- **Description:** {violation.description}")

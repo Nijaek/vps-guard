@@ -22,6 +22,10 @@ app = typer.Typer(
 )
 console = Console()
 
+# GeoIP sub-command group
+geoip_app = typer.Typer(help="Manage GeoIP database for IP geolocation")
+app.add_typer(geoip_app, name="geoip")
+
 
 def _auto_detect_format(content: str, filename: Optional[str] = None) -> str:
     """Auto-detect log format from content or filename.
@@ -387,6 +391,110 @@ verbosity = 1
         raise typer.Exit(1)
 
 
+@geoip_app.command("status")
+def geoip_status():
+    """Show GeoIP database status."""
+    from vpsguard.geo import get_database_info
+
+    info = get_database_info()
+
+    if info.exists:
+        console.print(Panel(
+            f"[bold green]GeoIP Database: Ready[/bold green]\n\n"
+            f"Path: {info.path}\n"
+            f"Size: {info.size_mb:.1f} MB\n"
+            f"Modified: {info.modified.strftime('%Y-%m-%d %H:%M:%S') if info.modified else 'Unknown'}",
+            title="GeoIP Status",
+            border_style="green"
+        ))
+    else:
+        console.print(Panel(
+            f"[bold yellow]GeoIP Database: Not Downloaded[/bold yellow]\n\n"
+            f"Expected path: {info.path}\n\n"
+            f"[dim]Run 'vpsguard geoip download' to download the database.[/dim]",
+            title="GeoIP Status",
+            border_style="yellow"
+        ))
+
+
+@geoip_app.command("download")
+def geoip_download(
+    force: bool = typer.Option(False, "--force", "-f", help="Force re-download even if database exists"),
+):
+    """Download the GeoLite2 database for IP geolocation.
+
+    Downloads the free GeoLite2-City database (~70MB) to ~/.vpsguard/
+    This enables geographic information in analysis reports.
+    """
+    from vpsguard.geo import get_database_info, download_database
+
+    info = get_database_info()
+
+    if info.exists and not force:
+        console.print(f"[yellow]Database already exists at {info.path}[/yellow]")
+        console.print(f"[dim]Size: {info.size_mb:.1f} MB, Modified: {info.modified}[/dim]")
+        console.print(f"[dim]Use --force to re-download[/dim]")
+        return
+
+    console.print(f"[cyan]Downloading GeoLite2-City database...[/cyan]")
+    console.print(f"[dim]This may take a moment (~70MB)[/dim]")
+
+    try:
+        from rich.progress import Progress, SpinnerColumn, BarColumn, DownloadColumn
+
+        with Progress(
+            SpinnerColumn(),
+            "[progress.description]{task.description}",
+            BarColumn(),
+            DownloadColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Downloading...", total=None)
+
+            def update_progress(downloaded: int, total: int):
+                if total > 0:
+                    progress.update(task, total=total, completed=downloaded)
+
+            path = download_database(progress_callback=update_progress)
+
+        console.print(f"[green]Downloaded successfully to {path}[/green]")
+
+        # Show updated status
+        info = get_database_info()
+        console.print(f"[dim]Size: {info.size_mb:.1f} MB[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]Download failed: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@geoip_app.command("delete")
+def geoip_delete(
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
+):
+    """Delete the GeoIP database."""
+    from vpsguard.geo import get_database_info, delete_database
+
+    info = get_database_info()
+
+    if not info.exists:
+        console.print(f"[yellow]No database to delete (not found at {info.path})[/yellow]")
+        return
+
+    if not force:
+        console.print(f"[yellow]This will delete: {info.path}[/yellow]")
+        console.print(f"[dim]Size: {info.size_mb:.1f} MB[/dim]")
+        confirm = typer.confirm("Are you sure?")
+        if not confirm:
+            console.print("[dim]Cancelled[/dim]")
+            return
+
+    if delete_database():
+        console.print(f"[green]Database deleted[/green]")
+    else:
+        console.print(f"[red]Failed to delete database[/red]")
+
+
 @app.command()
 def train(
     file_path: str = typer.Argument(..., help="Path to log file to train on"),
@@ -520,6 +628,7 @@ def analyze(
     format: str = typer.Option("terminal", "--format", help="Output format: terminal, markdown, json, html"),
     output: Optional[str] = typer.Option(None, "--output", help="Output file path (stdout if not specified)"),
     save_history: bool = typer.Option(False, "--save-history", help="Save run to history database for tracking"),
+    geoip: bool = typer.Option(False, "--geoip", "-g", help="Enable GeoIP lookups for IP geolocation"),
 ):
     """Analyze log files for security threats. Supports multiple log files."""
     try:
@@ -667,6 +776,42 @@ def analyze(
                         console.print(f"[yellow]Warning: ML detection failed: {e}[/yellow]")
                         console.print(f"[yellow]Continuing with rule-based detection only...[/yellow]")
 
+        # GeoIP lookups if enabled
+        geo_data = None
+        if geoip:
+            from vpsguard.geo import get_database_info, GeoIPReader
+
+            db_info = get_database_info()
+            if not db_info.exists:
+                if format != "json":
+                    console.print(f"[yellow]Warning: GeoIP database not found[/yellow]")
+                    console.print(f"[dim]Run 'vpsguard geoip download' to enable geolocation[/dim]")
+            else:
+                try:
+                    if format != "json":
+                        console.print(f"[dim]Looking up IP locations...[/dim]")
+
+                    # Collect all IPs from violations and anomalies
+                    all_ips = set()
+                    for v in filtered_violations:
+                        if v.ip:
+                            all_ips.add(v.ip)
+                    for a in anomalies:
+                        if a.ip:
+                            all_ips.add(a.ip)
+
+                    # Look up locations
+                    with GeoIPReader(db_info.path) as reader:
+                        geo_data = {ip: reader.lookup(ip) for ip in all_ips}
+
+                    if format != "json":
+                        known_count = sum(1 for loc in geo_data.values() if loc.is_known)
+                        console.print(f"[green]GeoIP: {known_count}/{len(all_ips)} IPs located[/green]")
+
+                except Exception as e:
+                    if format != "json":
+                        console.print(f"[yellow]Warning: GeoIP lookup failed: {e}[/yellow]")
+
         # Build analysis report
         analysis_report = AnalysisReport(
             timestamp=datetime.now(timezone.utc),
@@ -676,6 +821,7 @@ def analyze(
             anomalies=anomalies,
             baseline_drift=baseline_drift,
             summary=None,
+            geo_data=geo_data,
         )
 
         # Generate report

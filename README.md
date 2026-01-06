@@ -62,6 +62,7 @@ python -m vpsguard.cli analyze test.log -v
 | `analyze` | Run security analysis (rules + ML) |
 | `watch` | Continuous monitoring with scheduled batch analysis |
 | `history` | View analysis history |
+| `geoip` | Manage GeoIP database for IP geolocation |
 
 ### Parse Logs
 
@@ -122,6 +123,23 @@ python -m vpsguard.cli init --output myconfig.toml
 python -m vpsguard.cli init --force
 ```
 
+### GeoIP Database (Optional)
+
+VPSGuard can show geographic locations for IPs using the free GeoLite2 database:
+
+```bash
+# Check GeoIP status
+vpsguard geoip status
+
+# Download GeoLite2-City database (~70MB)
+vpsguard geoip download
+
+# Delete the database
+vpsguard geoip delete
+```
+
+Once downloaded, use `--geoip` flag with analyze to see locations.
+
 ### Analyze Logs
 
 ```bash
@@ -136,6 +154,9 @@ python -m vpsguard.cli analyze /var/log/auth.log -vv
 
 # Use custom config
 python -m vpsguard.cli analyze /var/log/auth.log --config vpsguard.toml
+
+# Include geographic location for IPs (requires GeoIP database)
+python -m vpsguard.cli analyze /var/log/auth.log --geoip
 
 # Output as Markdown
 python -m vpsguard.cli analyze /var/log/auth.log --format markdown --output report.md
@@ -239,6 +260,11 @@ anomaly_threshold = 3   # Alert if 3+ new anomalies
 [watch.output]
 directory = "~/.vpsguard/reports"
 formats = ["markdown", "json", "html"]
+
+# GeoIP configuration (optional)
+[geoip]
+enabled = true
+database_path = "~/.vpsguard/GeoLite2-City.mmdb"
 ```
 
 ## Detection Rules
@@ -313,9 +339,10 @@ vpsguard/
 │   ├── models/             # Data models (AuthEvent, RuleViolation, etc.)
 │   ├── rules/              # Detection rules + engine
 │   ├── ml/                 # ML features, detector, baseline, explainability
-│   ├── reporters/          # Output formatters (terminal, markdown, json)
-│   └── generators/         # Synthetic log generator
-├── tests/                  # Test suite (190 tests)
+│   ├── reporters/          # Output formatters (terminal, markdown, json, html)
+│   ├── generators/         # Synthetic log generator
+│   └── geo/                # GeoIP integration for IP geolocation
+├── tests/                  # Test suite (268 tests)
 ├── vpsguard.example.toml   # Example configuration
 └── pyproject.toml
 ```

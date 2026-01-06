@@ -81,7 +81,7 @@ class TerminalReporter:
         for severity in severity_order:
             violations = violations_by_severity.get(severity, [])
             if violations:
-                self._render_severity_section(severity, violations, console)
+                self._render_severity_section(severity, violations, console, report.geo_data)
 
         # If no violations found
         if not report.rule_violations:
@@ -148,7 +148,8 @@ class TerminalReporter:
         self,
         severity: Severity,
         violations: list[RuleViolation],
-        console: Console
+        console: Console,
+        geo_data: dict | None = None
     ) -> None:
         """Render section for a specific severity level.
 
@@ -156,6 +157,7 @@ class TerminalReporter:
             severity: Severity level.
             violations: List of violations at this severity.
             console: Rich Console to render to.
+            geo_data: Optional dict mapping IP to GeoLocation.
         """
         # Severity colors
         severity_colors = {
@@ -171,27 +173,41 @@ class TerminalReporter:
 
         # Show violations (limited by max_per_severity)
         for i, violation in enumerate(violations[:self.max_per_severity]):
-            self._render_violation(violation, console, color)
+            self._render_violation(violation, console, color, geo_data)
 
         # Show count if we have more
         remaining = len(violations) - self.max_per_severity
         if remaining > 0:
             console.print(f"[dim]... and {remaining} more {severity.value} findings[/dim]\n")
 
-    def _render_violation(self, violation: RuleViolation, console: Console, color: str) -> None:
+    def _render_violation(
+        self,
+        violation: RuleViolation,
+        console: Console,
+        color: str,
+        geo_data: dict | None = None
+    ) -> None:
         """Render a single violation as a panel.
 
         Args:
             violation: RuleViolation to render.
             console: Rich Console to render to.
             color: Color for the panel border.
+            geo_data: Optional dict mapping IP to GeoLocation.
         """
         # Build violation details
         details_text = Text()
 
         # Basic info
         details_text.append(f"IP: ", style="bold")
-        details_text.append(f"{violation.ip}\n", style=color)
+        details_text.append(f"{violation.ip}", style=color)
+
+        # Add geo location if available
+        if geo_data and violation.ip in geo_data:
+            geo = geo_data[violation.ip]
+            if geo.is_known:
+                details_text.append(f" ({geo})", style="dim cyan")
+        details_text.append("\n")
 
         details_text.append(f"Time: ", style="bold")
         details_text.append(f"{violation.timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n", style="white")

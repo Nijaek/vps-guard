@@ -89,6 +89,13 @@ class WatchScheduleConfig:
 
 
 @dataclass
+class GeoIPConfig:
+    """Configuration for GeoIP lookups."""
+    enabled: bool = True
+    database_path: str = "~/.vpsguard/GeoLite2-City.mmdb"
+
+
+@dataclass
 class VPSGuardConfig:
     """Main configuration container for VPSGuard."""
     rules: RulesConfig = field(default_factory=RulesConfig)
@@ -96,6 +103,7 @@ class VPSGuardConfig:
     output: OutputConfig = field(default_factory=OutputConfig)
     watch_schedule: WatchScheduleConfig = field(default_factory=WatchScheduleConfig)
     watch_output: WatchOutputConfig = field(default_factory=WatchOutputConfig)
+    geoip: GeoIPConfig = field(default_factory=GeoIPConfig)
 
 
 def load_config(path: Path | str | None = None) -> VPSGuardConfig:
@@ -215,6 +223,14 @@ def _build_config(data: dict[str, Any]) -> VPSGuardConfig:
                 formats=output.get("formats", ["markdown", "json"])
             )
 
+    # Load GeoIP configuration
+    if "geoip" in data:
+        geoip_data = data["geoip"]
+        config.geoip = GeoIPConfig(
+            enabled=geoip_data.get("enabled", True),
+            database_path=geoip_data.get("database_path", "~/.vpsguard/GeoLite2-City.mmdb")
+        )
+
     return config
 
 
@@ -290,5 +306,9 @@ def validate_config(config: VPSGuardConfig) -> list[str]:
     for ip in config.whitelist_ips:
         if not isinstance(ip, str) or len(ip) == 0:
             warnings.append(f"Invalid whitelist IP: {ip}")
+
+    # Validate GeoIP config
+    if not isinstance(config.geoip.database_path, str) or len(config.geoip.database_path) == 0:
+        warnings.append("geoip.database_path must be a non-empty string")
 
     return warnings
