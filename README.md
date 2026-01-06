@@ -240,6 +240,12 @@ end = 6                 # 6 AM
 timezone = "UTC"
 severity = "medium"
 
+[rules.multi_vector]
+enabled = true
+min_sources = 2         # IP must appear in 2+ log sources
+min_events_per_source = 3
+severity = "high"
+
 [whitelist]
 ips = ["192.168.1.1", "10.0.0.1"]
 
@@ -276,10 +282,11 @@ database_path = "~/.vpsguard/GeoLite2-City.mmdb"
 | Quiet Hours | MEDIUM | Successful login during off-hours |
 | Invalid User | MEDIUM | Multiple attempts on non-existent usernames |
 | Root Login | MEDIUM | Direct root login attempts |
+| Multi-Vector | HIGH | Same IP attacking multiple services (multi-log correlation) |
 
 ## ML Features
 
-VPSGuard extracts 9 features for anomaly detection:
+VPSGuard extracts 10 features for anomaly detection:
 
 | Feature | Description |
 |---------|-------------|
@@ -291,7 +298,7 @@ VPSGuard extracts 9 features for anomaly detection:
 | `has_success_after_failures` | Breach indicator |
 | `hour_of_day` | Temporal pattern |
 | `same_target_ips_5min` | Coordinated attack detection |
-| `same_target_ips_30min` | Wider coordination window |
+| `attack_vectors` | Distinct log sources per IP (multi-log correlation) |
 
 ## Example Output
 
@@ -342,7 +349,7 @@ vpsguard/
 │   ├── reporters/          # Output formatters (terminal, markdown, json, html)
 │   ├── generators/         # Synthetic log generator
 │   └── geo/                # GeoIP integration for IP geolocation
-├── tests/                  # Test suite (268 tests)
+├── tests/                  # Test suite (281 tests)
 ├── vpsguard.example.toml   # Example configuration
 └── pyproject.toml
 ```
