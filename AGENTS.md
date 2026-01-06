@@ -48,7 +48,7 @@ The rule engine serves dual purposes: (1) detect known attack patterns and (2) f
 
 - **`cli.py`** — Typer CLI with 8 commands: parse, generate, init, train, analyze, watch, history, geoip
 - **`parsers/`** — Log format parsers (auth.log, secure, journald, nginx, syslog). All return standardized `AuthEvent` objects.
-- **`rules/`** — 6 detection rules (brute_force, breach_detection, quiet_hours, invalid_user, root_login, multi_vector) + engine orchestrator
+- **`rules/`** — 7 detection rules (brute_force, breach_detection, quiet_hours, invalid_user, root_login, multi_vector, geo_velocity) + engine orchestrator
 - **`ml/`** — Feature extraction (10 features per IP), IsolationForest detector, baseline drift detection, explainability
 - **`reporters/`** — Output formatters (terminal/Rich, JSON, Markdown, HTML with filtering)
 - **`generators/`** — Synthetic log generator with 6 attack profiles for testing
@@ -103,7 +103,7 @@ Features designed to catch distributed attacks:
 
 ## Testing Patterns
 
-281 tests across 16 files. Test files mirror source structure:
+300 tests across 16 files. Test files mirror source structure:
 - `test_parsers.py` — Each parser format with edge cases
 - `test_rules.py` — Each rule type + whitelist filtering
 - `test_ml.py` — Feature extraction, detector, baseline drift
@@ -118,7 +118,7 @@ Features designed to catch distributed attacks:
 ## Configuration
 
 TOML-based (`vpsguard.toml`). Key sections:
-- `[rules.*]` — Enable/disable rules, tune thresholds (brute_force, breach_detection, quiet_hours, invalid_user, root_login, multi_vector)
+- `[rules.*]` — Enable/disable rules, tune thresholds (brute_force, breach_detection, quiet_hours, invalid_user, root_login, multi_vector, geo_velocity)
 - `[whitelist]` — IPs to exclude from detection
 - `[output]` — Default format and verbosity
 - `[watch.schedule]` — Watch daemon interval and alert thresholds

@@ -295,3 +295,367 @@ class TestGeoIPInReports:
         )
 
         assert report.geo_data is None
+
+
+class TestHaversineDistance:
+    """Tests for haversine distance calculation."""
+
+    def test_same_location(self):
+        """Test distance between same location is 0."""
+        loc = GeoLocation(latitude=40.7128, longitude=-74.0060)  # NYC
+        distance = haversine_distance(loc, loc)
+        assert distance == 0.0
+
+    def test_nyc_to_london(self):
+        """Test known distance between NYC and London (~5570km)."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278)
+        distance = haversine_distance(nyc, london)
+        # Should be approximately 5570 km
+        assert 5500 < distance < 5700
+
+    def test_la_to_tokyo(self):
+        """Test known distance between LA and Tokyo (~8800km)."""
+        la = GeoLocation(latitude=34.0522, longitude=-118.2437)
+        tokyo = GeoLocation(latitude=35.6762, longitude=139.6503)
+        distance = haversine_distance(la, tokyo)
+        # Should be approximately 8800 km
+        assert 8700 < distance < 9000
+
+    def test_missing_coordinates(self):
+        """Test returns None when coordinates missing."""
+        loc1 = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        loc2 = GeoLocation(country_code="GB")  # No coordinates
+        assert haversine_distance(loc1, loc2) is None
+        assert haversine_distance(loc2, loc1) is None
+
+
+class TestCalculateVelocity:
+    """Tests for velocity calculation."""
+
+    def test_basic_velocity(self):
+        """Test basic velocity calculation."""
+        from datetime import timedelta
+
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278)
+
+        time1 = datetime(2024, 1, 1, 10, 0, 0)
+        time2 = datetime(2024, 1, 1, 18, 0, 0)  # 8 hours later
+
+        velocity = calculate_velocity(nyc, london, time1, time2)
+
+        # ~5570km in 8 hours = ~696 km/h
+        assert 650 < velocity < 750
+
+    def test_instant_teleport(self):
+        """Test velocity is infinite for instant travel."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278)
+
+        time1 = datetime(2024, 1, 1, 10, 0, 0)
+        time2 = datetime(2024, 1, 1, 10, 0, 0)  # Same time
+
+        velocity = calculate_velocity(nyc, london, time1, time2)
+        assert velocity == float('inf')
+
+    def test_same_location_same_time(self):
+        """Test velocity is 0 for same location at same time."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
+
+        time = datetime(2024, 1, 1, 10, 0, 0)
+
+        velocity = calculate_velocity(nyc, nyc, time, time)
+        assert velocity == 0.0
+
+    def test_missing_coordinates_returns_none(self):
+        """Test returns None when coordinates missing."""
+        loc1 = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        loc2 = GeoLocation()
+
+        time1 = datetime(2024, 1, 1, 10, 0, 0)
+        time2 = datetime(2024, 1, 1, 12, 0, 0)
+
+        assert calculate_velocity(loc1, loc2, time1, time2) is None
+
+
+class TestFormatVelocity:
+    """Tests for velocity formatting."""
+
+    def test_normal_velocity(self):
+        """Test formatting normal velocity."""
+        assert format_velocity(500) == "500 km/h"
+
+    def test_impossible_velocity(self):
+        """Test formatting impossible velocity."""
+        assert "impossible" in format_velocity(1500)
+
+    def test_very_high_velocity(self):
+        """Test formatting very high velocity."""
+        result = format_velocity(15000)
+        assert "k km/h" in result  # Should use k notation
+
+    def test_infinite_velocity(self):
+        """Test formatting infinite velocity."""
+        assert format_velocity(float('inf')) == "instantaneous"
+
+
+class TestGeoVelocityRule:
+    """Tests for geographic velocity detection rule."""
+
+    def test_impossible_travel_detection(self):
+        """Test detection of impossible travel."""
+        config = GeoVelocityConfig(max_velocity_km_h=1000, min_distance_km=100)
+        rule = GeoVelocityRule(config)
+
+        # NYC coordinates
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US", city="New York")
+        # Tokyo coordinates
+        tokyo = GeoLocation(latitude=35.6762, longitude=139.6503, country_code="JP", city="Tokyo")
+
+        geo_data = {
+            "1.1.1.1": nyc,
+            "2.2.2.2": tokyo,
+        }
+
+        from datetime import timedelta
+        base_time = datetime(2024, 1, 1, 10, 0, 0)
+
+        events = [
+            # User logs in from NYC
+            AuthEvent(
+                timestamp=base_time,
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+            # Same user logs in from Tokyo 30 minutes later (impossible!)
+            AuthEvent(
+                timestamp=base_time + timedelta(minutes=30),
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="2.2.2.2",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+        ]
+
+        violations = rule.evaluate(events, geo_data)
+
+        assert len(violations) == 1
+        assert violations[0].rule_name == "geo_velocity"
+        assert "impossible" in violations[0].description.lower() or "travel" in violations[0].description.lower()
+        assert violations[0].details["username"] == "admin"
+
+    def test_reasonable_travel_no_violation(self):
+        """Test that reasonable travel speed doesn't trigger."""
+        config = GeoVelocityConfig(max_velocity_km_h=1000, min_distance_km=100)
+        rule = GeoVelocityRule(config)
+
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US", city="New York")
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278, country_code="GB", city="London")
+
+        geo_data = {
+            "1.1.1.1": nyc,
+            "2.2.2.2": london,
+        }
+
+        from datetime import timedelta
+        base_time = datetime(2024, 1, 1, 10, 0, 0)
+
+        events = [
+            # User logs in from NYC
+            AuthEvent(
+                timestamp=base_time,
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+            # Same user logs in from London 8 hours later (possible by flight)
+            AuthEvent(
+                timestamp=base_time + timedelta(hours=8),
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="2.2.2.2",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+        ]
+
+        violations = rule.evaluate(events, geo_data)
+
+        # ~5570km in 8 hours = ~696 km/h (below 1000 threshold)
+        assert len(violations) == 0
+
+    def test_no_geo_data_no_violations(self):
+        """Test that rule returns no violations without geo_data."""
+        config = GeoVelocityConfig()
+        rule = GeoVelocityRule(config)
+
+        events = [
+            AuthEvent(
+                timestamp=datetime.now(),
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+        ]
+
+        violations = rule.evaluate(events, None)
+        assert len(violations) == 0
+
+    def test_disabled_rule(self):
+        """Test that disabled rule returns no violations."""
+        config = GeoVelocityConfig(enabled=False)
+        rule = GeoVelocityRule(config)
+
+        geo_data = {
+            "1.1.1.1": GeoLocation(latitude=40.7128, longitude=-74.0060),
+            "2.2.2.2": GeoLocation(latitude=35.6762, longitude=139.6503),
+        }
+
+        from datetime import timedelta
+        base_time = datetime(2024, 1, 1, 10, 0, 0)
+
+        events = [
+            AuthEvent(
+                timestamp=base_time,
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+            AuthEvent(
+                timestamp=base_time + timedelta(minutes=1),
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="2.2.2.2",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+        ]
+
+        violations = rule.evaluate(events, geo_data)
+        assert len(violations) == 0
+
+    def test_same_ip_no_violation(self):
+        """Test that same IP doesn't trigger violation."""
+        config = GeoVelocityConfig(max_velocity_km_h=1000, min_distance_km=100)
+        rule = GeoVelocityRule(config)
+
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
+
+        geo_data = {"1.1.1.1": nyc}
+
+        from datetime import timedelta
+        base_time = datetime(2024, 1, 1, 10, 0, 0)
+
+        events = [
+            AuthEvent(
+                timestamp=base_time,
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+            AuthEvent(
+                timestamp=base_time + timedelta(minutes=1),
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+        ]
+
+        violations = rule.evaluate(events, geo_data)
+        assert len(violations) == 0
+
+    def test_failed_logins_ignored(self):
+        """Test that failed logins are ignored for impossible travel."""
+        config = GeoVelocityConfig(max_velocity_km_h=1000, min_distance_km=100)
+        rule = GeoVelocityRule(config)
+
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        tokyo = GeoLocation(latitude=35.6762, longitude=139.6503)
+
+        geo_data = {
+            "1.1.1.1": nyc,
+            "2.2.2.2": tokyo,
+        }
+
+        from datetime import timedelta
+        base_time = datetime(2024, 1, 1, 10, 0, 0)
+
+        events = [
+            # Failed login from NYC
+            AuthEvent(
+                timestamp=base_time,
+                event_type=EventType.FAILED_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=False,
+                raw_line="test"
+            ),
+            # Failed login from Tokyo 1 minute later
+            AuthEvent(
+                timestamp=base_time + timedelta(minutes=1),
+                event_type=EventType.FAILED_LOGIN,
+                ip="2.2.2.2",
+                username="admin",
+                success=False,
+                raw_line="test"
+            ),
+        ]
+
+        violations = rule.evaluate(events, geo_data)
+        # Failed logins don't indicate actual user travel
+        assert len(violations) == 0
+
+    def test_short_distance_ignored(self):
+        """Test that short distance travel is ignored."""
+        config = GeoVelocityConfig(max_velocity_km_h=1000, min_distance_km=100)
+        rule = GeoVelocityRule(config)
+
+        # Two locations ~30km apart (NYC to Newark)
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        newark = GeoLocation(latitude=40.7357, longitude=-74.1724)
+
+        geo_data = {
+            "1.1.1.1": nyc,
+            "2.2.2.2": newark,
+        }
+
+        from datetime import timedelta
+        base_time = datetime(2024, 1, 1, 10, 0, 0)
+
+        events = [
+            AuthEvent(
+                timestamp=base_time,
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+            AuthEvent(
+                timestamp=base_time + timedelta(seconds=1),
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="2.2.2.2",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+        ]
+
+        violations = rule.evaluate(events, geo_data)
+        # Distance is below min_distance_km threshold
+        assert len(violations) == 0

@@ -246,6 +246,12 @@ min_sources = 2         # IP must appear in 2+ log sources
 min_events_per_source = 3
 severity = "high"
 
+[rules.geo_velocity]
+enabled = true
+max_velocity_km_h = 1000  # Max travel speed (commercial jet)
+min_distance_km = 100     # Minimum distance to consider
+severity = "high"
+
 [whitelist]
 ips = ["192.168.1.1", "10.0.0.1"]
 
@@ -283,6 +289,7 @@ database_path = "~/.vpsguard/GeoLite2-City.mmdb"
 | Invalid User | MEDIUM | Multiple attempts on non-existent usernames |
 | Root Login | MEDIUM | Direct root login attempts |
 | Multi-Vector | HIGH | Same IP attacking multiple services (multi-log correlation) |
+| Geo Velocity | HIGH | Impossible travel detection (logins from distant locations too quickly) |
 
 ## ML Features
 
@@ -349,7 +356,7 @@ vpsguard/
 │   ├── reporters/          # Output formatters (terminal, markdown, json, html)
 │   ├── generators/         # Synthetic log generator
 │   └── geo/                # GeoIP integration for IP geolocation
-├── tests/                  # Test suite (281 tests)
+├── tests/                  # Test suite (300 tests)
 ├── vpsguard.example.toml   # Example configuration
 └── pyproject.toml
 ```
