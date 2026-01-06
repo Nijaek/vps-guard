@@ -1,5 +1,7 @@
-# Design documents (local only)
-docs/
+# Design documents (exclude session-specific files, include shareable plans)
+docs/*
+!docs/plans/
+!docs/plans/*.md
 
 # Python
 __pycache__/
