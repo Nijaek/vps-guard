@@ -35,8 +35,13 @@ jobs:
       - name: Run tests with coverage
         if: matrix.python-version == '3.11'
         run: |
-          pip install pytest-cov
+          pip install pytest-cov coverage
           python -m pytest tests/ --cov=vpsguard --cov-report=term-missing --cov-report=xml
+
+      - name: Check coverage threshold
+        if: matrix.python-version == '3.11'
+        run: |
+          coverage report --fail-under=80
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.11'
@@ -65,6 +70,27 @@ jobs:
       - name: Run Ruff linter
         run: ruff check src/ tests/
         continue-on-error: true
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Security audit
+        run: |
+          pip install pip-audit
+          pip-audit --desc
 
   build:
     name: Build Package

@@ -329,6 +329,18 @@ CRITICAL FINDINGS
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
+## Development Setup
+
+```bash
+# Install with dev dependencies
+pip install -e ".[dev]"
+
+# Install pre-commit hooks (runs automatically on commit)
+pre-commit install
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
+
 ## Running Tests
 
 ```bash
@@ -360,6 +372,80 @@ vpsguard/
 ├── vpsguard.example.toml   # Example configuration
 └── pyproject.toml
 ```
+
+## API Reference
+
+### Extending VPSGuard
+
+VPSGuard is designed to be extensible through protocol-based interfaces.
+
+#### Adding a Custom Parser
+
+```python
+from vpsguard.parsers.base import Parser
+from vpsguard.models.events import AuthEvent, EventType
+
+class MyCustomParser(Parser):
+    """Parse custom log format."""
+
+    def parse(self, line: str) -> AuthEvent | None:
+        """
+        Parse a log line into an AuthEvent.
+
+        Args:
+            line: Raw log line
+
+        Returns:
+            AuthEvent if successfully parsed, None otherwise
+        """
+        # Your implementation
+        pass
+```
+
+#### Adding a Custom Detection Rule
+
+```python
+from vpsguard.rules.base import Rule, RuleViolation
+from vpsguard.models.events import AuthEvent, Severity
+
+class MyCustomRule(Rule):
+    """Custom detection rule."""
+
+    def __init__(self, config: dict):
+        super().__init__(
+            name="my_custom_rule",
+            description="Detects my custom pattern",
+            severity=Severity.MEDIUM
+        )
+        self.config = config
+
+    def check(self, event: AuthEvent) -> RuleViolation | None:
+        """
+        Check if event matches rule.
+
+        Args:
+            event: Authentication event to check
+
+        Returns:
+            RuleViolation if matched, None otherwise
+        """
+        # Your implementation
+        pass
+```
+
+### Public API Stability
+
+The following APIs are stable and follow semantic versioning:
+
+- **vpsguard.models.*** - Core data structures (AuthEvent, RuleViolation, etc.)
+- **vpsguard.parsers.base.Parser** - Parser protocol interface
+- **vpsguard.rules.base.Rule** - Rule protocol interface
+- **vpsguard.cli** - CLI command interface
+
+All internal modules may change without notice. For extending VPSGuard,
+use the protocol-based interfaces defined in `parsers.base` and `rules.base`.
+
+For detailed API documentation, see inline docstrings in the source code.
 
 ## What VPSGuard is NOT
 
