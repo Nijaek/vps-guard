@@ -11,7 +11,16 @@ from vpsguard.geo.database import (
     get_database_info,
     GeoDatabase,
 )
-from vpsguard.config import load_config, VPSGuardConfig, GeoIPConfig
+from vpsguard.geo.velocity import (
+    haversine_distance,
+    calculate_velocity,
+    analyze_user_travel,
+    format_velocity,
+    TravelEvent,
+)
+from vpsguard.config import load_config, VPSGuardConfig, GeoIPConfig, GeoVelocityConfig
+from vpsguard.rules.geo_velocity import GeoVelocityRule
+from vpsguard.models.events import AuthEvent, EventType
 
 
 class TestGeoLocation:

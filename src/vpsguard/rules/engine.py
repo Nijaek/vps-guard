@@ -1,5 +1,7 @@
 """Rule engine - orchestrates all detection rules."""
 
+from typing import Optional
+
 from vpsguard.models.events import AuthEvent, RuleViolation, RuleEngineOutput
 from vpsguard.config import VPSGuardConfig
 from vpsguard.rules.base import Rule
@@ -9,6 +11,7 @@ from vpsguard.rules.quiet_hours import QuietHoursRule
 from vpsguard.rules.invalid_user import InvalidUserRule
 from vpsguard.rules.root_login import RootLoginRule
 from vpsguard.rules.multi_vector import MultiVectorRule
+from vpsguard.rules.geo_velocity import GeoVelocityRule
 
 
 class RuleEngine:
@@ -43,19 +46,36 @@ class RuleEngine:
             MultiVectorRule(self.config.rules.multi_vector),
         ]
         return rules
+
+    def _initialize_geo_rule(self) -> GeoVelocityRule:
+        """Create geo velocity rule instance.
+
+        Separated from other rules because it requires geo_data during evaluation.
+
+        Returns:
+            GeoVelocityRule instance.
+        """
+        return GeoVelocityRule(self.config.rules.geo_velocity)
     
-    def evaluate(self, events: list[AuthEvent]) -> RuleEngineOutput:
+    def evaluate(
+        self,
+        events: list[AuthEvent],
+        geo_data: Optional[dict] = None
+    ) -> RuleEngineOutput:
         """Run all rules and return dual output.
-        
+
         This is the core of the detection engine. It:
         1. Runs all enabled rules
-        2. Collects all violations
-        3. Filters whitelisted IPs
-        4. Separates clean events (not flagged by any rule)
-        
+        2. Runs geo velocity rule if geo_data is provided
+        3. Collects all violations
+        4. Filters whitelisted IPs
+        5. Separates clean events (not flagged by any rule)
+
         Args:
             events: List of authentication events to analyze.
-            
+            geo_data: Optional mapping of IP addresses to GeoLocation objects.
+                     Required for geo velocity detection (impossible travel).
+
         Returns:
             RuleEngineOutput with:
             - violations: All rule violations found
@@ -64,20 +84,30 @@ class RuleEngine:
         """
         all_violations: list[RuleViolation] = []
         flagged_event_ids: set[int] = set()  # Track which events were flagged
-        
-        # Run all enabled rules
+
+        # Run all enabled standard rules
         for rule in self.rules:
             if not rule.enabled:
                 continue
-            
+
             violations = rule.evaluate(events)
-            
+
             # Track which events were flagged by this rule
             for violation in violations:
                 for event in violation.affected_events:
                     flagged_event_ids.add(id(event))
-            
+
             all_violations.extend(violations)
+
+        # Run geo velocity rule if geo_data is provided
+        if geo_data:
+            geo_rule = self._initialize_geo_rule()
+            if geo_rule.enabled:
+                geo_violations = geo_rule.evaluate(events, geo_data)
+                for violation in geo_violations:
+                    for event in violation.affected_events:
+                        flagged_event_ids.add(id(event))
+                all_violations.extend(geo_violations)
         
         # Filter out whitelisted IPs
         filtered_violations = []

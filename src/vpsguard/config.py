@@ -6,7 +6,13 @@ Loads and validates TOML configuration files with dataclass-based structure.
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-import tomllib  # Python 3.11+ stdlib
+import sys
+
+# tomllib is stdlib in Python 3.11+, use tomli for 3.10
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 
 @dataclass
@@ -62,6 +68,15 @@ class MultiVectorConfig:
 
 
 @dataclass
+class GeoVelocityConfig:
+    """Configuration for geographic velocity (impossible travel) detection rule."""
+    enabled: bool = True
+    max_velocity_km_h: float = 1000.0  # Max reasonable travel speed (~commercial jet)
+    min_distance_km: float = 100.0  # Minimum distance to consider (avoid false positives)
+    severity: str = "high"
+
+
+@dataclass
 class RulesConfig:
     """Container for all rule configurations."""
     brute_force: BruteForceConfig = field(default_factory=BruteForceConfig)
@@ -70,6 +85,7 @@ class RulesConfig:
     root_login: RootLoginConfig = field(default_factory=RootLoginConfig)
     invalid_user: InvalidUserConfig = field(default_factory=InvalidUserConfig)
     multi_vector: MultiVectorConfig = field(default_factory=MultiVectorConfig)
+    geo_velocity: GeoVelocityConfig = field(default_factory=GeoVelocityConfig)
 
 
 @dataclass
@@ -205,6 +221,15 @@ def _build_config(data: dict[str, Any]) -> VPSGuardConfig:
                 severity=mv.get("severity", "high")
             )
 
+        if "geo_velocity" in rules_data:
+            gv = rules_data["geo_velocity"]
+            config.rules.geo_velocity = GeoVelocityConfig(
+                enabled=gv.get("enabled", True),
+                max_velocity_km_h=gv.get("max_velocity_km_h", 1000.0),
+                min_distance_km=gv.get("min_distance_km", 100.0),
+                severity=gv.get("severity", "high")
+            )
+
     # Load whitelist
     if "whitelist" in data:
         config.whitelist_ips = data["whitelist"].get("ips", [])
@@ -311,6 +336,15 @@ def validate_config(config: VPSGuardConfig) -> list[str]:
         warnings.append("multi_vector.min_events_per_source must be >= 1")
     if mv.severity not in ("critical", "high", "medium", "low"):
         warnings.append(f"multi_vector.severity '{mv.severity}' is not valid")
+
+    # Validate geo velocity config
+    gv = config.rules.geo_velocity
+    if gv.max_velocity_km_h <= 0:
+        warnings.append("geo_velocity.max_velocity_km_h must be > 0")
+    if gv.min_distance_km < 0:
+        warnings.append("geo_velocity.min_distance_km must be >= 0")
+    if gv.severity not in ("critical", "high", "medium", "low"):
+        warnings.append(f"geo_velocity.severity '{gv.severity}' is not valid")
 
     # Validate output config
     if config.output.format not in ("terminal", "json"):
