@@ -25,7 +25,8 @@
 7. [Multi-Log Correlation Testing](#7-multi-log-correlation-testing)
 8. [Output Format Testing](#8-output-format-testing)
 9. [Error Handling Testing](#9-error-handling-testing)
-10. [End-to-End Scenarios](#10-end-to-end-scenarios)
+10. [Configuration Testing](#10-configuration-testing)
+11. [End-to-End Scenarios](#11-end-to-end-scenarios)
 
 ---
 
@@ -157,6 +158,30 @@ vpsguard parse test.log --input-format auth.log
 ```
 - [ ] Parses with explicit format specification
 - [ ] No format auto-detection warnings
+
+#### Nginx Log Format
+```bash
+# Generate nginx logs (if supported by generator, otherwise create manually)
+echo '192.168.1.100 - admin [01/Jan/2024:10:00:00 +0000] "POST /login HTTP/1.1" 401 0' > nginx-test.log
+echo '192.168.1.100 - admin [01/Jan/2024:10:00:05 +0000] "POST /login HTTP/1.1" 200 1234' >> nginx-test.log
+
+vpsguard parse nginx-test.log --input-format nginx
+```
+- [ ] Parses nginx access log format
+- [ ] Extracts IP, user, timestamp, status code
+- [ ] 401 status mapped to failure, 200 to success
+
+#### Syslog Format
+```bash
+# Create syslog format test file
+echo 'Jan  1 10:00:00 server sshd[1234]: Failed password for admin from 192.168.1.100 port 22 ssh2' > syslog-test.log
+echo 'Jan  1 10:00:05 server sshd[1234]: Accepted password for admin from 192.168.1.100 port 22 ssh2' >> syslog-test.log
+
+vpsguard parse syslog-test.log --input-format syslog
+```
+- [ ] Parses standard syslog format
+- [ ] Extracts timestamp, IP, username, event type
+- [ ] Handles syslog timestamp format correctly
 
 ---
 
@@ -303,6 +328,23 @@ vpsguard train --check --model vpsguard_model.pkl
 - [ ] Shows feature ranges
 - [ ] Does not modify model
 
+#### Train with Explicit Input Format
+```bash
+vpsguard generate --entries 2000 --format secure --output baseline-secure.log
+vpsguard train baseline-secure.log --input-format secure --model secure-model.pkl
+```
+- [ ] Parses with specified format
+- [ ] Training completes successfully
+- [ ] Model created
+
+#### Train with Custom Config
+```bash
+vpsguard init --output train-config.toml
+vpsguard train baseline.log --config train-config.toml
+```
+- [ ] Uses config for rule filtering during training
+- [ ] Training completes successfully
+
 ---
 
 ### 3.5 Analyze Command
@@ -389,6 +431,18 @@ vpsguard analyze test.log --save-history
 - [ ] Analysis saved to history database
 - [ ] Can view with `vpsguard history`
 
+#### Stdin Analysis
+```bash
+# Unix/Linux/Mac
+cat test.log | vpsguard analyze -
+
+# Windows PowerShell
+Get-Content test.log | vpsguard analyze -
+```
+- [ ] Analyzes successfully from stdin
+- [ ] Same findings as file-based analysis
+- [ ] All output formats work with stdin input
+
 ---
 
 ### 3.6 Watch Command
@@ -426,6 +480,37 @@ vpsguard watch test.log --stop
 - [ ] Status shows running/stopped
 - [ ] Stop terminates the daemon
 - [ ] PID file created at ~/.vpsguard/watch.pid
+
+#### Watch with Custom Config
+```bash
+vpsguard init --output watch-config.toml
+vpsguard watch test.log --foreground --once --config watch-config.toml
+```
+- [ ] Uses custom configuration file
+- [ ] Rule thresholds from config applied
+- [ ] Watch schedule settings from config applied
+
+#### Watch with Explicit Log Format
+```bash
+vpsguard generate --entries 500 --format secure --output watch-secure.log
+vpsguard watch watch-secure.log --foreground --once --format secure
+```
+- [ ] Parses with specified format
+- [ ] Analysis completes successfully
+
+#### Watch Report Generation
+```bash
+# Run watch and check for generated reports
+vpsguard watch test.log --foreground --once
+
+# Check default report directory
+ls ~/.vpsguard/reports/
+# or on Windows: dir %USERPROFILE%\.vpsguard\reports\
+```
+- [ ] Reports saved to ~/.vpsguard/reports/
+- [ ] Markdown report generated
+- [ ] JSON report generated
+- [ ] Reports contain analysis findings
 
 ---
 
@@ -492,6 +577,19 @@ vpsguard history cleanup --days 30
 - [ ] Removes runs older than 30 days
 - [ ] Shows count of deleted runs
 
+#### Custom Database Path
+```bash
+# Use custom database location
+vpsguard history list --db ./custom-history.db
+
+# Save to custom database
+vpsguard analyze test.log --save-history
+vpsguard history list --db ~/.vpsguard/history.db
+```
+- [ ] Reads from specified database path
+- [ ] All history commands work with --db option
+- [ ] Useful for separating test/production history
+
 ---
 
 ### 3.8 GeoIP Command
@@ -514,6 +612,22 @@ vpsguard geoip download
 - [ ] Saves to ~/.vpsguard/GeoLite2-City.mmdb
 - [ ] Shows download progress
 - [ ] Shows success message with file info
+
+#### Force Re-download
+```bash
+# First download
+vpsguard geoip download
+
+# Try to download again without --force
+vpsguard geoip download
+# Should skip or warn that database exists
+
+# Force re-download
+vpsguard geoip download --force
+```
+- [ ] Without --force: skips download if database exists
+- [ ] With --force: re-downloads even if database exists
+- [ ] New database replaces old one
 
 #### Verify Download
 ```bash
@@ -868,7 +982,179 @@ vpsguard analyze test.log --with-ml
 
 ---
 
-## 10. End-to-End Scenarios
+## 10. Configuration Testing
+
+Test configuration file options and their effects.
+
+### 10.1 Whitelist IP Testing
+
+Verify whitelisted IPs are excluded from detection.
+
+```bash
+# 1. Generate test data with known attack IP
+vpsguard generate --entries 500 --attack-profile brute:0.3 --seed 42 --output whitelist-test.log
+
+# 2. Analyze without whitelist - note the attacking IPs
+vpsguard analyze whitelist-test.log
+
+# 3. Create config with whitelist
+vpsguard init --output whitelist-config.toml
+```
+
+Edit `whitelist-config.toml` to add an attacking IP:
+```toml
+[whitelist]
+ips = ["<attacking-ip-from-step-2>"]
+```
+
+```bash
+# 4. Analyze with whitelist config
+vpsguard analyze whitelist-test.log --config whitelist-config.toml
+```
+- [ ] Whitelisted IP no longer appears in findings
+- [ ] Other attacking IPs still detected
+- [ ] Whitelist applies to all rules
+
+### 10.2 Rule Threshold Tuning
+
+Test adjusting rule thresholds via config.
+
+```bash
+# 1. Generate brute force data
+vpsguard generate --entries 500 --attack-profile brute:0.2 --output threshold-test.log
+
+# 2. Analyze with default thresholds
+vpsguard analyze threshold-test.log
+
+# 3. Create config with higher threshold
+vpsguard init --output threshold-config.toml
+```
+
+Edit `threshold-config.toml`:
+```toml
+[rules.brute_force]
+enabled = true
+threshold = 50  # Increase from default 10
+window_minutes = 5
+```
+
+```bash
+# 4. Analyze with higher threshold
+vpsguard analyze threshold-test.log --config threshold-config.toml
+```
+- [ ] Fewer brute force findings with higher threshold
+- [ ] Only IPs with 50+ failures flagged
+- [ ] Other rules unaffected
+
+### 10.3 Disable Individual Rules
+
+```bash
+vpsguard init --output disable-rules.toml
+```
+
+Edit `disable-rules.toml`:
+```toml
+[rules.brute_force]
+enabled = false
+
+[rules.quiet_hours]
+enabled = false
+```
+
+```bash
+vpsguard generate --entries 1000 --attack-profile brute:0.2 --output disable-test.log
+vpsguard analyze disable-test.log --config disable-rules.toml -v
+```
+- [ ] No brute force findings (rule disabled)
+- [ ] No quiet hours findings (rule disabled)
+- [ ] Other rules still active
+
+### 10.4 Watch Output Configuration
+
+Test watch daemon output settings.
+
+```bash
+vpsguard init --output watch-output-config.toml
+```
+
+Edit `watch-output-config.toml`:
+```toml
+[watch.output]
+directory = "./test-reports"
+formats = ["markdown", "json", "html"]
+
+[watch.schedule]
+interval = "5m"
+alert_threshold_high = 3
+alert_threshold_critical = 1
+```
+
+```bash
+# Create report directory
+mkdir -p ./test-reports
+
+# Run watch with custom output config
+vpsguard watch test.log --foreground --once --config watch-output-config.toml
+
+# Check reports
+ls ./test-reports/
+```
+- [ ] Reports saved to custom directory (./test-reports/)
+- [ ] All three formats generated (markdown, json, html)
+- [ ] Reports named with timestamp
+
+### 10.5 Watch Alert Thresholds
+
+Test alert threshold configuration.
+
+```bash
+# Generate data with many findings
+vpsguard generate --entries 1000 --attack-profile botnet:0.3 --output alert-test.log
+
+vpsguard init --output alert-config.toml
+```
+
+Edit `alert-config.toml`:
+```toml
+[watch.schedule]
+alert_threshold_high = 10
+alert_threshold_critical = 5
+```
+
+```bash
+vpsguard watch alert-test.log --foreground --once --config alert-config.toml
+```
+- [ ] Alert triggered if findings exceed thresholds
+- [ ] Report generated when thresholds exceeded
+- [ ] Threshold counts visible in output
+
+### 10.6 GeoIP Configuration
+
+```bash
+vpsguard init --output geoip-config.toml
+```
+
+Edit `geoip-config.toml`:
+```toml
+[geoip]
+enabled = true
+database_path = "~/.vpsguard/GeoLite2-City.mmdb"
+
+[rules.geo_velocity]
+enabled = true
+max_velocity_km_h = 500  # Stricter than default 1000
+```
+
+```bash
+vpsguard analyze test.log --geoip --config geoip-config.toml
+```
+- [ ] GeoIP lookups enabled
+- [ ] Custom database path used (if specified)
+- [ ] Geo velocity rule uses configured max speed
+
+---
+
+## 11. End-to-End Scenarios
 
 ### Scenario 1: New Server Setup
 
@@ -994,7 +1280,8 @@ After completing all tests, fill in this summary:
 | 7. Multi-Log | / | | |
 | 8. Output Formats | /4 | | |
 | 9. Error Handling | /6 | | |
-| 10. Scenarios | /4 | | |
+| 10. Configuration | /6 | | |
+| 11. Scenarios | /4 | | |
 
 **Total: ____ passed / ____ total**
 
