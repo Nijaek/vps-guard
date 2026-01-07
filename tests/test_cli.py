@@ -217,6 +217,8 @@ class TestGenerateCommand:
         so we test that the structure/content is deterministic, not exact byte match.
         With the same seed, IPs, usernames, and event types should be identical.
         """
+        import re
+
         result1 = runner.invoke(app, ["generate", "--entries", "50", "--seed", "42"])
         result2 = runner.invoke(app, ["generate", "--entries", "50", "--seed", "42"])
 
@@ -231,12 +233,16 @@ class TestGenerateCommand:
 
         # Extract non-timestamp parts (IP, username, event type)
         # Format: "Dec 30 14:58:20 server sshd[10105]: Accepted publickey for www-data from 10.116.148.253 port 53861 ssh2"
-        # Compare from "server sshd..." onwards (skip first 3 space-separated parts: month, day, time)
+        # Use regex to extract the message after "sshd[pid]: " which is deterministic with seed
+        # This handles variable timestamp formats and single-digit days with double spaces
+        sshd_pattern = re.compile(r'sshd\[\d+\]: (.+)$')
+
         for l1, l2 in zip(lines1, lines2):
-            parts1 = l1.split(' ', 3)  # Split: month, day, time, rest
-            parts2 = l2.split(' ', 3)
-            if len(parts1) >= 4 and len(parts2) >= 4:
-                assert parts1[3] == parts2[3], f"Content mismatch with same seed: {parts1[3]} != {parts2[3]}"
+            match1 = sshd_pattern.search(l1)
+            match2 = sshd_pattern.search(l2)
+            if match1 and match2:
+                # Compare the message content after "sshd[pid]: "
+                assert match1.group(1) == match2.group(1), f"Content mismatch with same seed: {match1.group(1)} != {match2.group(1)}"
 
     def test_generate_with_attack_profile(self):
         """Test generation with attack profile."""
