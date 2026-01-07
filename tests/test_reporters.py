@@ -20,6 +20,9 @@ from vpsguard.reporters import (
     JSONReporter,
     get_reporter,
 )
+from vpsguard.reporters.html import HTMLReporter
+from vpsguard.models.events import AnomalyResult, Confidence
+from vpsguard.geo.reader import GeoLocation
 
 
 @pytest.fixture
@@ -317,3 +320,417 @@ class TestGetReporter:
         """Test that empty string defaults to terminal."""
         reporter = get_reporter("")
         assert isinstance(reporter, TerminalReporter)
+
+    def test_get_html_reporter(self):
+        """Test getting HTML reporter."""
+        reporter = get_reporter("html")
+        assert isinstance(reporter, HTMLReporter)
+        assert reporter.name == "html"
+
+
+class TestHTMLReporter:
+    """Tests for HTMLReporter."""
+
+    def test_generate_report(self, sample_report):
+        """Test generating HTML report."""
+        reporter = HTMLReporter()
+        output = reporter.generate(sample_report)
+
+        # Check HTML structure
+        assert "<!DOCTYPE html>" in output
+        assert "<html lang=\"en\">" in output
+        assert "VPSGuard Security Report" in output
+        assert "</html>" in output
+
+        # Check CSS is embedded
+        assert "<style>" in output
+        assert "</style>" in output
+
+        # Check JavaScript is embedded
+        assert "<script>" in output
+        assert "filterFindings" in output
+
+        # Check report content
+        assert "2024-12-30" in output
+        assert "48,291" in output  # Total events formatted
+        assert "Successful Breach" in output
+        assert "Brute Force Attack" in output
+
+        # Check severity counts in summary cards
+        assert "Critical" in output
+        assert "High" in output
+
+    def test_generate_empty_report(self, empty_report):
+        """Test generating HTML report with no violations."""
+        reporter = HTMLReporter()
+        output = reporter.generate(empty_report)
+
+        assert "<!DOCTYPE html>" in output
+        assert "No Rule Violations Detected" in output
+        assert "No security violations were detected" in output
+
+    def test_generate_to_file(self, sample_report):
+        """Test writing HTML report to file."""
+        reporter = HTMLReporter()
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html') as f:
+            temp_path = f.name
+
+        try:
+            reporter.generate_to_file(sample_report, temp_path)
+
+            # Read back and verify
+            content = Path(temp_path).read_text(encoding='utf-8')
+            assert "<!DOCTYPE html>" in content
+            assert "VPSGuard Security Report" in content
+            assert "Successful Breach" in content
+        finally:
+            Path(temp_path).unlink()
+
+    def test_severity_colors(self, sample_report):
+        """Test that severity classes are applied correctly."""
+        reporter = HTMLReporter()
+        output = reporter.generate(sample_report)
+
+        # Check severity-specific CSS classes
+        assert 'class="finding-header critical"' in output
+        assert 'class="finding-header high"' in output
+        assert 'finding-badge critical' in output
+        assert 'finding-badge high' in output
+
+    def test_escape_html(self):
+        """Test HTML escaping of special characters."""
+        reporter = HTMLReporter()
+
+        assert reporter._escape_html("<script>") == "&lt;script&gt;"
+        assert reporter._escape_html("A & B") == "A &amp; B"
+        assert reporter._escape_html('"quoted"') == "&quot;quoted&quot;"
+        assert reporter._escape_html("it's") == "it&#39;s"
+        assert reporter._escape_html(123) == "123"  # Non-string input
+
+    def test_filter_controls(self, sample_report):
+        """Test that filter controls are included."""
+        reporter = HTMLReporter()
+        output = reporter.generate(sample_report)
+
+        # Check filter controls exist
+        assert 'id="severity-filter"' in output
+        assert 'id="ip-filter"' in output
+        assert 'id="time-filter"' in output
+        assert 'id="visible-count"' in output
+
+    def test_report_with_anomalies(self, sample_report):
+        """Test HTML report with ML anomalies."""
+        # Create report with anomalies
+        anomaly = AnomalyResult(
+            ip="10.0.0.1",
+            score=0.85,
+            confidence=Confidence.HIGH,
+            explanation=["High failure ratio", "Unusual username entropy"],
+            features={"failure_ratio": 0.9, "username_entropy": 3.5},
+        )
+        report_with_anomalies = AnalysisReport(
+            timestamp=sample_report.timestamp,
+            log_source=sample_report.log_source,
+            total_events=sample_report.total_events,
+            rule_violations=sample_report.rule_violations,
+            anomalies=[anomaly],
+        )
+
+        reporter = HTMLReporter()
+        output = reporter.generate(report_with_anomalies)
+
+        # Check anomaly section
+        assert "ML Anomalies Detected" in output
+        assert "10.0.0.1" in output
+        assert "85%" in output  # Score percentage
+        assert "High failure ratio" in output
+        assert "Unusual username entropy" in output
+
+    def test_report_with_baseline_drift(self, sample_report):
+        """Test HTML report with baseline drift warning."""
+        # Create report with drift
+        report_with_drift = AnalysisReport(
+            timestamp=sample_report.timestamp,
+            log_source=sample_report.log_source,
+            total_events=sample_report.total_events,
+            rule_violations=sample_report.rule_violations,
+            anomalies=[],
+            baseline_drift={
+                'drift_detected': True,
+                'drifted_features': ['failure_ratio', 'username_entropy'],
+            },
+        )
+
+        reporter = HTMLReporter()
+        output = reporter.generate(report_with_drift)
+
+        # Check drift warning
+        assert "Baseline Drift Detected" in output
+        assert "failure_ratio" in output
+        assert "username_entropy" in output
+        assert "Consider retraining" in output
+
+    def test_report_with_geo_data(self, sample_violation, sample_critical_violation):
+        """Test HTML report with GeoIP data."""
+        geo_data = {
+            "192.168.1.100": GeoLocation(country_code="US", country_name="United States", city="New York"),
+            "45.33.32.156": GeoLocation(country_code="RU", country_name="Russia", city="Moscow"),
+        }
+
+        report = AnalysisReport(
+            timestamp=datetime(2024, 12, 30, 3, 47, 0),
+            log_source="/var/log/auth.log",
+            total_events=1000,
+            rule_violations=[sample_violation, sample_critical_violation],
+            anomalies=[],
+            geo_data=geo_data,
+        )
+
+        reporter = HTMLReporter()
+        output = reporter.generate(report)
+
+        # Check geo locations are displayed (format is "city, country_code")
+        assert "New York, US" in output
+        assert "Moscow, RU" in output
+        assert "Location:" in output
+
+    def test_finding_data_attributes(self, sample_report):
+        """Test that findings have data attributes for filtering."""
+        reporter = HTMLReporter()
+        output = reporter.generate(sample_report)
+
+        # Check data attributes for JavaScript filtering
+        assert 'data-severity="critical"' in output
+        assert 'data-severity="high"' in output
+        assert 'data-ip="' in output
+        assert 'data-time="' in output
+
+    def test_responsive_meta_tag(self, sample_report):
+        """Test that viewport meta tag is included for mobile."""
+        reporter = HTMLReporter()
+        output = reporter.generate(sample_report)
+
+        assert 'name="viewport"' in output
+        assert 'width=device-width' in output
+
+    def test_all_severity_levels(self):
+        """Test report with all severity levels."""
+        violations = [
+            RuleViolation(
+                rule_name="Critical Issue",
+                severity=Severity.CRITICAL,
+                ip="1.1.1.1",
+                description="Critical",
+                timestamp=datetime.now(),
+                details={},
+                affected_events=[],
+            ),
+            RuleViolation(
+                rule_name="High Issue",
+                severity=Severity.HIGH,
+                ip="2.2.2.2",
+                description="High",
+                timestamp=datetime.now(),
+                details={},
+                affected_events=[],
+            ),
+            RuleViolation(
+                rule_name="Medium Issue",
+                severity=Severity.MEDIUM,
+                ip="3.3.3.3",
+                description="Medium",
+                timestamp=datetime.now(),
+                details={},
+                affected_events=[],
+            ),
+            RuleViolation(
+                rule_name="Low Issue",
+                severity=Severity.LOW,
+                ip="4.4.4.4",
+                description="Low",
+                timestamp=datetime.now(),
+                details={},
+                affected_events=[],
+            ),
+        ]
+
+        report = AnalysisReport(
+            timestamp=datetime.now(),
+            log_source="test.log",
+            total_events=100,
+            rule_violations=violations,
+            anomalies=[],
+        )
+
+        reporter = HTMLReporter()
+        output = reporter.generate(report)
+
+        # Check all severity sections
+        assert "Critical Findings (1)" in output
+        assert "High Findings (1)" in output
+        assert "Medium Findings (1)" in output
+        assert "Low Findings (1)" in output
+
+    def test_violation_details(self, sample_violation):
+        """Test that violation details are rendered."""
+        report = AnalysisReport(
+            timestamp=datetime.now(),
+            log_source="test.log",
+            total_events=100,
+            rule_violations=[sample_violation],
+            anomalies=[],
+        )
+
+        reporter = HTMLReporter()
+        output = reporter.generate(report)
+
+        # Check details are rendered
+        assert "Failed Attempts:" in output
+        assert "25" in output
+        assert "Time Window:" in output
+        assert "60 minutes" in output
+        assert "Target User:" in output
+        assert "admin" in output
+
+
+class TestJSONReporterWithGeoData:
+    """Tests for JSONReporter with GeoIP data."""
+
+    def test_report_with_geo_data(self, sample_violation, sample_critical_violation):
+        """Test JSON report includes geo_data section."""
+        geo_data = {
+            "192.168.1.100": GeoLocation(
+                country_code="US",
+                country_name="United States",
+                city="New York",
+                latitude=40.7128,
+                longitude=-74.0060,
+            ),
+            "45.33.32.156": GeoLocation(
+                country_code="RU",
+                country_name="Russia",
+                city="Moscow",
+                latitude=55.7558,
+                longitude=37.6173,
+            ),
+        }
+
+        report = AnalysisReport(
+            timestamp=datetime(2024, 12, 30, 3, 47, 0),
+            log_source="/var/log/auth.log",
+            total_events=1000,
+            rule_violations=[sample_violation, sample_critical_violation],
+            anomalies=[],
+            geo_data=geo_data,
+        )
+
+        reporter = JSONReporter()
+        output = reporter.generate(report)
+        data = json.loads(output)
+
+        # Check geo_data section exists
+        assert "geo_data" in data
+        assert "192.168.1.100" in data["geo_data"]
+        assert data["geo_data"]["192.168.1.100"]["country_code"] == "US"
+        assert data["geo_data"]["192.168.1.100"]["country_name"] == "United States"
+        assert data["geo_data"]["192.168.1.100"]["city"] == "New York"
+        assert data["geo_data"]["192.168.1.100"]["latitude"] == 40.7128
+        assert data["geo_data"]["192.168.1.100"]["longitude"] == -74.0060
+
+        # Check metadata shows geoip_enabled
+        assert data["metadata"]["geoip_enabled"] is True
+
+    def test_violation_includes_location(self, sample_violation):
+        """Test violations include location from geo_data."""
+        geo_data = {
+            "192.168.1.100": GeoLocation(
+                country_code="US",
+                country_name="United States",
+                city="New York",
+            ),
+        }
+
+        report = AnalysisReport(
+            timestamp=datetime(2024, 12, 30, 3, 47, 0),
+            log_source="/var/log/auth.log",
+            total_events=1000,
+            rule_violations=[sample_violation],
+            anomalies=[],
+            geo_data=geo_data,
+        )
+
+        reporter = JSONReporter()
+        output = reporter.generate(report)
+        data = json.loads(output)
+
+        # Check violation has location
+        violation = data["rule_violations"][0]
+        assert "location" in violation
+        assert "New York, US" in violation["location"]
+
+    def test_anomaly_includes_location(self):
+        """Test anomalies include location from geo_data."""
+        anomaly = AnomalyResult(
+            ip="10.0.0.1",
+            score=0.85,
+            confidence=Confidence.HIGH,
+            explanation=["High failure ratio"],
+            features={"failure_ratio": 0.9},
+        )
+
+        geo_data = {
+            "10.0.0.1": GeoLocation(
+                country_code="DE",
+                country_name="Germany",
+                city="Berlin",
+            ),
+        }
+
+        report = AnalysisReport(
+            timestamp=datetime(2024, 12, 30, 3, 47, 0),
+            log_source="/var/log/auth.log",
+            total_events=1000,
+            rule_violations=[],
+            anomalies=[anomaly],
+            geo_data=geo_data,
+        )
+
+        reporter = JSONReporter()
+        output = reporter.generate(report)
+        data = json.loads(output)
+
+        # Check anomaly has location
+        anomaly_data = data["anomalies"][0]
+        assert "location" in anomaly_data
+        assert "Berlin, DE" in anomaly_data["location"]
+
+        # Check anomaly fields are serialized
+        assert anomaly_data["ip"] == "10.0.0.1"
+        assert anomaly_data["score"] == 0.85
+        assert anomaly_data["confidence"] == "high"
+        assert "High failure ratio" in anomaly_data["explanation"]
+        assert anomaly_data["features"]["failure_ratio"] == 0.9
+
+    def test_unknown_geo_not_included_in_location(self, sample_violation):
+        """Test that unknown geo locations don't add location field."""
+        geo_data = {
+            "192.168.1.100": GeoLocation(),  # Unknown location
+        }
+
+        report = AnalysisReport(
+            timestamp=datetime(2024, 12, 30, 3, 47, 0),
+            log_source="/var/log/auth.log",
+            total_events=1000,
+            rule_violations=[sample_violation],
+            anomalies=[],
+            geo_data=geo_data,
+        )
+
+        reporter = JSONReporter()
+        output = reporter.generate(report)
+        data = json.loads(output)
+
+        # Unknown location should not add location field
+        violation = data["rule_violations"][0]
+        assert "location" not in violation

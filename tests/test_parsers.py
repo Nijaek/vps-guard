@@ -261,6 +261,32 @@ class TestSecureLogParser:
 
         assert result.format_type == "secure"
 
+    def test_parse_file(self, tmp_path):
+        """Test parsing from a file path."""
+        parser = SecureLogParser()
+
+        # Create a temp file with log content
+        log_content = """Jan 15 03:12:47 server sshd[1234]: Failed password for root from 192.168.1.100 port 22345 ssh2
+Jan 15 03:12:50 server sshd[1234]: Accepted password for ubuntu from 10.0.0.5 port 54321 ssh2
+Jan 15 03:12:55 server sshd[1235]: Failed password for invalid user admin from 192.168.1.101 port 22346 ssh2"""
+
+        log_file = tmp_path / "secure"
+        log_file.write_text(log_content)
+
+        result = parser.parse_file(str(log_file))
+
+        assert len(result.events) == 3
+        assert result.source_file == str(log_file)
+        assert result.format_type == "secure"
+
+        # Check events parsed correctly
+        assert result.events[0].event_type == EventType.FAILED_LOGIN
+        assert result.events[0].ip == "192.168.1.100"
+        assert result.events[1].event_type == EventType.SUCCESSFUL_LOGIN
+        assert result.events[1].ip == "10.0.0.5"
+        assert result.events[2].event_type == EventType.FAILED_LOGIN
+        assert result.events[2].username == "admin"
+
 
 class TestJournaldParser:
     """Tests for JournaldParser."""

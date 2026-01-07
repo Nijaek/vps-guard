@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 
 from vpsguard.models.events import AuthEvent, EventType, Severity
+from vpsguard.geo.reader import GeoLocation
 from vpsguard.config import (
     VPSGuardConfig,
     load_config,
@@ -716,6 +717,49 @@ class TestRuleEngine:
         assert result.violations == []
         assert result.clean_events == []
         assert result.flagged_ips == set()
+
+    def test_geo_velocity_rule_integration(self):
+        """Test that geo velocity rule is triggered when geo_data is provided."""
+        config = VPSGuardConfig()
+        config.rules.geo_velocity.enabled = True
+        config.rules.geo_velocity.max_velocity_km_h = 1000
+        engine = RuleEngine(config)
+
+        # NYC and Tokyo coordinates - impossible travel in 30 minutes
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US", city="New York")
+        tokyo = GeoLocation(latitude=35.6762, longitude=139.6503, country_code="JP", city="Tokyo")
+
+        geo_data = {
+            "1.1.1.1": nyc,
+            "2.2.2.2": tokyo,
+        }
+
+        base_time = datetime(2024, 1, 1, 10, 0, 0)
+        events = [
+            AuthEvent(
+                timestamp=base_time,
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="1.1.1.1",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+            # Same user logs in from Tokyo 30 minutes later (impossible!)
+            AuthEvent(
+                timestamp=base_time + timedelta(minutes=30),
+                event_type=EventType.SUCCESSFUL_LOGIN,
+                ip="2.2.2.2",
+                username="admin",
+                success=True,
+                raw_line="test"
+            ),
+        ]
+
+        result = engine.evaluate(events, geo_data=geo_data)
+
+        # Should have geo velocity violation
+        geo_violations = [v for v in result.violations if v.rule_name == "geo_velocity"]
+        assert len(geo_violations) >= 1
 
 
 class TestMultiVectorRule:

@@ -177,3 +177,51 @@ def test_history_cleanup_old_runs(history_db):
     recent_runs = history_db.get_recent_runs(limit=10)
     assert len(recent_runs) == 1
     assert recent_runs[0]['log_source'] == "/recent/log"
+
+
+def test_get_ip_history(history_db, sample_report):
+    """Should get violation history for a specific IP."""
+    # Save the report
+    history_db.save_run(sample_report)
+
+    # Get history for the IP in the violation
+    history = history_db.get_ip_history("192.168.1.100", days=30)
+
+    assert history["ip"] == "192.168.1.100"
+    assert history["days"] == 30
+    assert history["total_violations"] >= 1
+    assert "violations" in history
+    assert "anomaly_count" in history
+    assert "avg_anomaly_score" in history
+
+
+def test_get_ip_history_no_violations(history_db):
+    """Should return zero counts for IP with no history."""
+    history = history_db.get_ip_history("1.2.3.4", days=30)
+
+    assert history["ip"] == "1.2.3.4"
+    assert history["total_violations"] == 0
+    assert history["anomaly_count"] == 0
+
+
+def test_get_top_offenders(history_db, sample_report):
+    """Should get top offending IPs."""
+    # Save the report
+    history_db.save_run(sample_report)
+
+    # Get top offenders
+    offenders = history_db.get_top_offenders(days=30, limit=10)
+
+    assert isinstance(offenders, list)
+    if len(offenders) > 0:
+        assert "ip" in offenders[0]
+        assert "total" in offenders[0]
+        assert "critical" in offenders[0]
+        assert "high" in offenders[0]
+
+
+def test_get_top_offenders_empty(history_db):
+    """Should return empty list when no violations."""
+    offenders = history_db.get_top_offenders(days=30, limit=10)
+
+    assert offenders == []

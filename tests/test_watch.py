@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from vpsguard.watch import WatchDaemon, parse_interval
+from vpsguard.watch import WatchDaemon, parse_interval, detect_log_format
 from vpsguard.models.events import WatchState
 from vpsguard.history import HistoryDB
 
@@ -149,3 +149,45 @@ def test_parse_log_file_not_found(tmp_path, history_db):
 
     events = daemon.parse_log()
     assert events == []
+
+
+class TestDetectLogFormat:
+    """Tests for detect_log_format function."""
+
+    def test_detect_auth_log(self):
+        """Should detect auth.log format."""
+        assert detect_log_format("/var/log/auth.log") == "auth.log"
+        assert detect_log_format("/var/log/AUTH.LOG") == "auth.log"
+        assert detect_log_format("/logs/myauth.log") == "auth.log"
+
+    def test_detect_secure_log(self):
+        """Should detect secure log format."""
+        assert detect_log_format("/var/log/secure") == "secure"
+        assert detect_log_format("/var/log/SECURE") == "secure"
+        assert detect_log_format("/logs/secure.log") == "secure"
+
+    def test_detect_nginx_log(self):
+        """Should detect nginx log format."""
+        assert detect_log_format("/var/log/nginx/access.log") == "nginx"
+        assert detect_log_format("/var/log/nginx.log") == "nginx"
+        assert detect_log_format("/logs/access.log") == "nginx"
+
+    def test_detect_journald_log(self):
+        """Should detect journald format."""
+        assert detect_log_format("/var/log/journal.log") == "journald"
+        assert detect_log_format("/logs/journal-export") == "journald"
+
+    def test_detect_default_syslog(self):
+        """Should default to syslog for unknown files."""
+        assert detect_log_format("/var/log/messages") == "syslog"
+        assert detect_log_format("/var/log/system.log") == "syslog"
+        assert detect_log_format("/logs/custom.log") == "syslog"
+
+
+def test_parse_interval_invalid():
+    """Should raise ValueError for invalid interval format."""
+    with pytest.raises(ValueError, match="Invalid interval format"):
+        parse_interval("5x")  # Invalid suffix
+
+    with pytest.raises(ValueError, match="Invalid interval format"):
+        parse_interval("abc")  # No number

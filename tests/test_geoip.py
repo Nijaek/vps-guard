@@ -9,6 +9,8 @@ from vpsguard.geo.reader import GeoLocation, GeoIPReader
 from vpsguard.geo.database import (
     get_default_db_path,
     get_database_info,
+    download_database,
+    delete_database,
     GeoDatabase,
 )
 from vpsguard.geo.velocity import (
@@ -16,6 +18,7 @@ from vpsguard.geo.velocity import (
     calculate_velocity,
     analyze_user_travel,
     format_velocity,
+    format_travel_summary,
     TravelEvent,
 )
 from vpsguard.config import load_config, VPSGuardConfig, GeoIPConfig, GeoVelocityConfig
@@ -219,6 +222,130 @@ class TestDatabaseInfo:
         assert info.size_mb >= 0.99  # ~1MB
         assert info.modified is not None
         assert info.status == "Ready"
+
+
+class TestDeleteDatabase:
+    """Tests for delete_database function."""
+
+    def test_delete_existing_database(self, tmp_path):
+        """Test deleting an existing database."""
+        db_path = tmp_path / "test.mmdb"
+        db_path.write_bytes(b"x" * 1024)
+
+        result = delete_database(db_path)
+
+        assert result is True
+        assert not db_path.exists()
+
+    def test_delete_nonexistent_database(self, tmp_path):
+        """Test deleting a non-existent database returns False."""
+        db_path = tmp_path / "nonexistent.mmdb"
+
+        result = delete_database(db_path)
+
+        assert result is False
+
+
+class TestDownloadDatabase:
+    """Tests for download_database function."""
+
+    @patch('urllib.request.urlopen')
+    def test_download_success(self, mock_urlopen, tmp_path):
+        """Test successful database download."""
+        db_path = tmp_path / "test.mmdb"
+
+        # Mock response with valid content
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Length": "2000000"}
+        # Return 2MB of data in chunks
+        fake_data = b"x" * 2_000_000
+        chunks = [fake_data[i:i+8192] for i in range(0, len(fake_data), 8192)]
+        chunks.append(b"")  # End of stream
+        mock_response.read.side_effect = chunks
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        result = download_database(db_path)
+
+        assert result == db_path
+        assert db_path.exists()
+        assert db_path.stat().st_size >= 1_000_000
+
+    @patch('urllib.request.urlopen')
+    def test_download_with_progress_callback(self, mock_urlopen, tmp_path):
+        """Test download with progress callback."""
+        db_path = tmp_path / "test.mmdb"
+
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Length": "2000000"}
+        fake_data = b"x" * 2_000_000
+        chunks = [fake_data[i:i+8192] for i in range(0, len(fake_data), 8192)]
+        chunks.append(b"")
+        mock_response.read.side_effect = chunks
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        progress_calls = []
+        def progress_cb(downloaded, total):
+            progress_calls.append((downloaded, total))
+
+        download_database(db_path, progress_callback=progress_cb)
+
+        assert len(progress_calls) > 0
+        assert progress_calls[-1][0] == 2_000_000  # Final downloaded size
+        assert progress_calls[-1][1] == 2_000_000  # Total size
+
+    @patch('urllib.request.urlopen')
+    def test_download_file_too_small_fails(self, mock_urlopen, tmp_path):
+        """Test that download fails if file is too small."""
+        db_path = tmp_path / "test.mmdb"
+
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Length": "1000"}
+        mock_response.read.side_effect = [b"x" * 1000, b""]
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        with pytest.raises(RuntimeError, match="Failed to download"):
+            download_database(db_path)
+
+    @patch('urllib.request.urlopen')
+    def test_download_network_error_retries(self, mock_urlopen, tmp_path):
+        """Test that download retries on network error."""
+        db_path = tmp_path / "test.mmdb"
+
+        # First call fails, second succeeds
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Length": "2000000"}
+        fake_data = b"x" * 2_000_000
+        chunks = [fake_data[i:i+8192] for i in range(0, len(fake_data), 8192)]
+        chunks.append(b"")
+        mock_response.read.side_effect = chunks
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+
+        mock_urlopen.side_effect = [
+            Exception("Network error"),
+            mock_response,
+        ]
+
+        result = download_database(db_path)
+
+        assert result == db_path
+        assert mock_urlopen.call_count == 2
+
+    @patch('urllib.request.urlopen')
+    def test_download_all_sources_fail(self, mock_urlopen, tmp_path):
+        """Test error when all download sources fail."""
+        db_path = tmp_path / "test.mmdb"
+
+        mock_urlopen.side_effect = Exception("Network error")
+
+        with pytest.raises(RuntimeError, match="Failed to download"):
+            download_database(db_path)
 
 
 class TestGeoIPConfig:
@@ -659,3 +786,261 @@ class TestGeoVelocityRule:
         violations = rule.evaluate(events, geo_data)
         # Distance is below min_distance_km threshold
         assert len(violations) == 0
+
+
+class TestTravelEvent:
+    """Tests for TravelEvent dataclass."""
+
+    def test_is_impossible_true(self):
+        """Test is_impossible returns True for high velocity."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US")
+        tokyo = GeoLocation(latitude=35.6762, longitude=139.6503, country_code="JP")
+
+        event = TravelEvent(
+            username="admin",
+            from_ip="1.1.1.1",
+            to_ip="2.2.2.2",
+            from_location=nyc,
+            to_location=tokyo,
+            from_time=datetime(2024, 1, 1, 10, 0),
+            to_time=datetime(2024, 1, 1, 10, 30),
+            distance_km=10000,
+            time_hours=0.5,
+            velocity_km_h=20000,  # Impossible velocity
+        )
+
+        assert event.is_impossible is True
+
+    def test_is_impossible_false(self):
+        """Test is_impossible returns False for normal velocity."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US")
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278, country_code="GB")
+
+        event = TravelEvent(
+            username="admin",
+            from_ip="1.1.1.1",
+            to_ip="2.2.2.2",
+            from_location=nyc,
+            to_location=london,
+            from_time=datetime(2024, 1, 1, 10, 0),
+            to_time=datetime(2024, 1, 1, 18, 0),
+            distance_km=5570,
+            time_hours=8.0,
+            velocity_km_h=696,  # Reasonable velocity
+        )
+
+        assert event.is_impossible is False
+
+    def test_is_impossible_boundary(self):
+        """Test is_impossible at boundary velocity."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US")
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278, country_code="GB")
+
+        # Exactly 1000 km/h is still possible
+        event = TravelEvent(
+            username="admin",
+            from_ip="1.1.1.1",
+            to_ip="2.2.2.2",
+            from_location=nyc,
+            to_location=london,
+            from_time=datetime(2024, 1, 1, 10, 0),
+            to_time=datetime(2024, 1, 1, 15, 0),
+            distance_km=5000,
+            time_hours=5.0,
+            velocity_km_h=1000,
+        )
+
+        assert event.is_impossible is False
+
+        # Just over 1000 km/h is impossible
+        event2 = TravelEvent(
+            username="admin",
+            from_ip="1.1.1.1",
+            to_ip="2.2.2.2",
+            from_location=nyc,
+            to_location=london,
+            from_time=datetime(2024, 1, 1, 10, 0),
+            to_time=datetime(2024, 1, 1, 15, 0),
+            distance_km=5000,
+            time_hours=5.0,
+            velocity_km_h=1001,
+        )
+
+        assert event2.is_impossible is True
+
+
+class TestAnalyzeUserTravel:
+    """Tests for analyze_user_travel function."""
+
+    def test_single_event_returns_empty(self):
+        """Test single event returns no travel events."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        events = [(datetime(2024, 1, 1, 10, 0), "1.1.1.1", nyc)]
+
+        result = analyze_user_travel(events, "admin")
+        assert result == []
+
+    def test_empty_events_returns_empty(self):
+        """Test empty events returns no travel events."""
+        result = analyze_user_travel([], "admin")
+        assert result == []
+
+    def test_same_ip_skipped(self):
+        """Test same IP events are skipped."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        events = [
+            (datetime(2024, 1, 1, 10, 0), "1.1.1.1", nyc),
+            (datetime(2024, 1, 1, 11, 0), "1.1.1.1", nyc),
+        ]
+
+        result = analyze_user_travel(events, "admin")
+        assert result == []
+
+    def test_short_distance_skipped(self):
+        """Test short distance travel is skipped."""
+        # Two locations ~10km apart
+        loc1 = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        loc2 = GeoLocation(latitude=40.7500, longitude=-74.0000)
+        events = [
+            (datetime(2024, 1, 1, 10, 0), "1.1.1.1", loc1),
+            (datetime(2024, 1, 1, 10, 1), "2.2.2.2", loc2),
+        ]
+
+        result = analyze_user_travel(events, "admin")
+        assert result == []
+
+    def test_missing_coordinates_skipped(self):
+        """Test events with missing coordinates are skipped."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
+        unknown = GeoLocation()  # No coordinates
+        events = [
+            (datetime(2024, 1, 1, 10, 0), "1.1.1.1", nyc),
+            (datetime(2024, 1, 1, 11, 0), "2.2.2.2", unknown),
+        ]
+
+        result = analyze_user_travel(events, "admin")
+        assert result == []
+
+    def test_valid_travel_event(self):
+        """Test valid travel event is returned."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US")
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278, country_code="GB")
+        events = [
+            (datetime(2024, 1, 1, 10, 0), "1.1.1.1", nyc),
+            (datetime(2024, 1, 1, 18, 0), "2.2.2.2", london),
+        ]
+
+        result = analyze_user_travel(events, "admin")
+        assert len(result) == 1
+        event = result[0]
+        assert event.username == "admin"
+        assert event.from_ip == "1.1.1.1"
+        assert event.to_ip == "2.2.2.2"
+        assert 5500 < event.distance_km < 5700  # ~5570km
+        assert event.time_hours == 8.0
+        assert 650 < event.velocity_km_h < 750
+
+    def test_instant_travel_infinite_velocity(self):
+        """Test instant travel results in infinite velocity."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US")
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278, country_code="GB")
+        same_time = datetime(2024, 1, 1, 10, 0)
+        events = [
+            (same_time, "1.1.1.1", nyc),
+            (same_time, "2.2.2.2", london),
+        ]
+
+        result = analyze_user_travel(events, "admin")
+        assert len(result) == 1
+        assert result[0].velocity_km_h == float('inf')
+
+    def test_multiple_travels(self):
+        """Test multiple travel events."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US")
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278, country_code="GB")
+        tokyo = GeoLocation(latitude=35.6762, longitude=139.6503, country_code="JP")
+        events = [
+            (datetime(2024, 1, 1, 10, 0), "1.1.1.1", nyc),
+            (datetime(2024, 1, 1, 18, 0), "2.2.2.2", london),
+            (datetime(2024, 1, 2, 6, 0), "3.3.3.3", tokyo),
+        ]
+
+        result = analyze_user_travel(events, "admin")
+        assert len(result) == 2
+        assert result[0].from_ip == "1.1.1.1"
+        assert result[0].to_ip == "2.2.2.2"
+        assert result[1].from_ip == "2.2.2.2"
+        assert result[1].to_ip == "3.3.3.3"
+
+
+class TestFormatTravelSummary:
+    """Tests for format_travel_summary function."""
+
+    def test_basic_format(self):
+        """Test basic travel summary formatting."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US", city="New York")
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278, country_code="GB", city="London")
+
+        event = TravelEvent(
+            username="admin",
+            from_ip="1.1.1.1",
+            to_ip="2.2.2.2",
+            from_location=nyc,
+            to_location=london,
+            from_time=datetime(2024, 1, 1, 10, 0),
+            to_time=datetime(2024, 1, 1, 18, 0),
+            distance_km=5570,
+            time_hours=8.0,
+            velocity_km_h=696,
+        )
+
+        summary = format_travel_summary(event)
+        assert "admin" in summary
+        assert "5570km" in summary
+        assert "New York, US" in summary
+        assert "London, GB" in summary
+        assert "8.0h" in summary
+        assert "696 km/h" in summary
+
+    def test_format_short_time(self):
+        """Test formatting with short time (minutes)."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US")
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278, country_code="GB")
+
+        event = TravelEvent(
+            username="admin",
+            from_ip="1.1.1.1",
+            to_ip="2.2.2.2",
+            from_location=nyc,
+            to_location=london,
+            from_time=datetime(2024, 1, 1, 10, 0),
+            to_time=datetime(2024, 1, 1, 10, 30),
+            distance_km=5570,
+            time_hours=0.5,
+            velocity_km_h=11140,
+        )
+
+        summary = format_travel_summary(event)
+        assert "30min" in summary
+        assert "k km/h" in summary  # Very high velocity uses k notation
+
+    def test_format_impossible_velocity(self):
+        """Test formatting with impossible velocity."""
+        nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US")
+        london = GeoLocation(latitude=51.5074, longitude=-0.1278, country_code="GB")
+
+        event = TravelEvent(
+            username="admin",
+            from_ip="1.1.1.1",
+            to_ip="2.2.2.2",
+            from_location=nyc,
+            to_location=london,
+            from_time=datetime(2024, 1, 1, 10, 0),
+            to_time=datetime(2024, 1, 1, 12, 0),
+            distance_km=5570,
+            time_hours=2.0,
+            velocity_km_h=2785,
+        )
+
+        summary = format_travel_summary(event)
+        assert "impossible" in summary
