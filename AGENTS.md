@@ -35,29 +35,29 @@ VPSGuard is an ML-first security analyzer for VPS logs. It detects distributed a
 ### Detection Pipeline
 
 ```
-Log Files → Parser → RuleEngine → MLEngine → Reporter
-                         ↓             ↓
-                    violations    anomalies
-                         ↓             ↓
-                    clean_events → (training data)
+Log Files -> Parser -> RuleEngine -> MLEngine -> Reporter
+                 |             |
+            violations     anomalies
+                 |             |
+            clean_events -> (training data)
 ```
 
 The rule engine serves dual purposes: (1) detect known attack patterns and (2) filter out flagged events so ML trains only on "clean" baseline data.
 
 ### Module Structure
 
-- **`cli.py`** — Typer CLI with 8 commands: parse, generate, init, train, analyze, watch, history, geoip
-- **`parsers/`** — Log format parsers (auth.log, secure, journald, nginx, syslog). All return standardized `AuthEvent` objects.
-- **`rules/`** — 7 detection rules (brute_force, breach_detection, quiet_hours, invalid_user, root_login, multi_vector, geo_velocity) + engine orchestrator
-- **`ml/`** — Feature extraction (10 features per IP), IsolationForest detector, baseline drift detection, explainability
-- **`reporters/`** — Output formatters (terminal/Rich, JSON, Markdown, HTML with filtering)
-- **`generators/`** — Synthetic log generator with 6 attack profiles for testing
-- **`models/events.py`** — Core dataclasses: AuthEvent, RuleViolation, AnomalyResult, AnalysisReport, WatchState
-- **`config.py`** — TOML config loader with dataclass validation + watch schedule config
-- **`history.py`** — SQLite persistence for analysis runs + watch state
-- **`watch.py`** — Watch daemon for scheduled batch analysis with incremental parsing
-- **`daemon.py`** — Daemon lifecycle management (PID files, signals, graceful shutdown)
-- **`geo/`** — GeoIP integration for IP geolocation using MaxMind GeoLite2 database
+- **`cli.py`** - Typer CLI with commands: parse, generate, init, train, analyze, watch, history + geoip subcommands (status, download, delete)
+- **`parsers/`** - Log format parsers (auth.log, secure, journald, nginx, syslog). All return standardized `AuthEvent` objects.
+- **`rules/`** - 7 detection rules (brute_force, breach_detection, quiet_hours, invalid_user, root_login, multi_vector, geo_velocity) + engine orchestrator
+- **`ml/`** - Feature extraction (10 features per IP), IsolationForest detector, baseline drift detection, explainability
+- **`reporters/`** - Output formatters (terminal/Rich, JSON, Markdown, HTML with filtering)
+- **`generators/`** - Synthetic log generator with 6 attack profiles for testing
+- **`models/events.py`** - Core dataclasses: AuthEvent, RuleViolation, AnomalyResult, AnalysisReport, WatchState
+- **`config.py`** - TOML config loader with dataclass validation (tomllib on 3.11+, tomli fallback on 3.10)
+- **`history.py`** - SQLite persistence for analysis runs + watch state
+- **`watch.py`** - Watch daemon for scheduled batch analysis with incremental parsing
+- **`daemon.py`** - Daemon lifecycle management (PID files, signals, graceful shutdown)
+- **`geo/`** - GeoIP integration for IP geolocation using MaxMind GeoLite2 database
 
 ### Key Design Patterns
 
@@ -73,18 +73,18 @@ The watch command provides scheduled batch monitoring:
 
 ```
 vpsguard watch /var/log/auth.log
-  │
-  ├─► Daemonize (PID file: ~/.vpsguard/watch.pid)
-  ├─► Load watch state from SQLite (byte_offset, inode)
-  │
-  └─► [Event Loop]
-       │
-       ├─► Check for log rotation (inode change, file size < offset)
-       ├─► Parse log incrementally from saved byte_offset
-       ├─► Run full analysis (rules + optional ML)
-       ├─► Save new state to SQLite
-       ├─► Generate reports if findings exceed thresholds
-       └─► Sleep until next interval
+  |
+  +-> Daemonize (PID file: ~/.vpsguard/watch.pid)
+  +-> Load watch state from SQLite (byte_offset, inode/ctime)
+  |
+  +-> [Event Loop]
+        |
+        +-> Detect rotation (inode/ctime change or size < offset)
+        +-> Parse incrementally from saved byte_offset
+        +-> Run full analysis (rules + optional ML)
+        +-> Save new state to SQLite
+        +-> Generate reports if findings exceed thresholds
+        +-> Sleep until next interval
 ```
 
 Key watch features:
@@ -95,24 +95,32 @@ Key watch features:
 ### ML Features (10 per IP)
 
 Features designed to catch distributed attacks:
-- `same_target_ips_5min/30min` — Detects coordinated botnet attacks (multiple IPs targeting same users)
-- `has_success_after_failures` — Binary breach indicator
-- `failure_ratio`, `max_failure_streak` — Attack intensity
-- `username_entropy` — Detects generated/randomized usernames
-- `attack_vectors` — Number of distinct log sources (multi-log correlation)
+- `attempts_per_hour` - Activity rate per IP
+- `unique_usernames` - Breadth of usernames targeted
+- `failure_ratio` - Attack intensity
+- `hour_of_day_mean`, `hour_of_day_std` - Temporal patterns
+- `max_failure_streak` - Brute force depth
+- `has_success_after_failures` - Breach indicator
+- `same_target_ips_5min` - Coordinated botnet detection
+- `username_entropy` - Randomized username detection
+- `attack_vectors` - Distinct log sources per IP
 
 ## Testing Patterns
 
-300 tests across 16 files. Test files mirror source structure:
-- `test_parsers.py` — Each parser format with edge cases
+355 tests across 15 files. Test files mirror source structure:
+- `test_parsers.py` — Auth/secure/journald parsers
+- `test_nginx_parser.py`, `test_syslog_parser.py` — Additional parsers
 - `test_rules.py` — Each rule type + whitelist filtering
 - `test_ml.py` — Feature extraction, detector, baseline drift
 - `test_analyze.py` — Integration tests for full pipeline
 - `test_generators.py` — All 6 attack profiles, all output formats
-- `test_watch.py` — Watch daemon, incremental parsing, log rotation detection
+- `test_reporters.py` — Terminal/Markdown/JSON/HTML output
+- `test_watch.py`, `test_watch_config.py` — Watch daemon, incremental parsing, rotation detection
 - `test_daemon.py` — PID file management, signal handling
 - `test_history.py` — SQLite persistence, watch state, cleanup
 - `test_geoip.py` — GeoIP reader, database management, config loading
+- `test_cli.py` — CLI argument handling and output
+- `test_models.py` — Dataclass semantics and serialization
 - `benchmark.py` — Performance benchmarks (100K lines parsing/analysis)
 
 ## Configuration
@@ -120,7 +128,7 @@ Features designed to catch distributed attacks:
 TOML-based (`vpsguard.toml`). Key sections:
 - `[rules.*]` — Enable/disable rules, tune thresholds (brute_force, breach_detection, quiet_hours, invalid_user, root_login, multi_vector, geo_velocity)
 - `[whitelist]` — IPs to exclude from detection
-- `[output]` — Default format and verbosity
+- `[output]` — Default format and verbosity (terminal, markdown, json, html)
 - `[watch.schedule]` — Watch daemon interval and alert thresholds
 - `[watch.output]` — Report directory and output formats
 - `[geoip]` — GeoIP database settings (enabled, database_path)

@@ -106,6 +106,52 @@ class TestAnalyzeCommand:
         assert result.exit_code == 0
         assert "Loaded config from:" in result.stdout or result.exit_code == 0
 
+    def test_analyze_geoip_passes_geo_data(self, sample_auth_log, monkeypatch):
+        """GeoIP-enabled analyze should pass geo_data into the rule engine."""
+        from pathlib import Path
+        from vpsguard.geo import GeoLocation
+        from vpsguard.models.events import RuleEngineOutput
+        import vpsguard.geo as geo_module
+        import vpsguard.rules.engine as rules_engine
+
+        class DummyDB:
+            exists = True
+            path = Path("dummy.mmdb")
+            size_mb = 1.0
+            modified = None
+
+        def dummy_get_database_info(path=None):
+            return DummyDB()
+
+        class DummyReader:
+            def __init__(self, path):
+                self.path = path
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def lookup(self, ip):
+                return GeoLocation(latitude=0.0, longitude=0.0, country_code="US", city="Test")
+
+        class DummyRuleEngine:
+            def __init__(self, config):
+                pass
+
+            def evaluate(self, events, geo_data=None):
+                assert geo_data is not None
+                return RuleEngineOutput(violations=[], clean_events=events, flagged_ips=set())
+
+        monkeypatch.setattr(geo_module, "get_database_info", dummy_get_database_info)
+        monkeypatch.setattr(geo_module, "GeoIPReader", DummyReader)
+        monkeypatch.setattr(rules_engine, "RuleEngine", DummyRuleEngine)
+
+        result = runner.invoke(app, ["analyze", sample_auth_log, "--geoip", "--format", "json"])
+
+        assert result.exit_code == 0
+
     def test_analyze_breach_detection(self, sample_breach_log):
         """Test that breach detection works."""
         result = runner.invoke(app, ["analyze", sample_breach_log, "-v"])

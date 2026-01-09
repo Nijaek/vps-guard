@@ -347,8 +347,11 @@ def validate_config(config: VPSGuardConfig) -> list[str]:
         warnings.append(f"geo_velocity.severity '{gv.severity}' is not valid")
 
     # Validate output config
-    if config.output.format not in ("terminal", "json"):
-        warnings.append(f"output.format '{config.output.format}' is not valid (use 'terminal' or 'json')")
+    if config.output.format not in ("terminal", "markdown", "json", "html"):
+        warnings.append(
+            f"output.format '{config.output.format}' is not valid "
+            "(use 'terminal', 'markdown', 'json', or 'html')"
+        )
     if not (0 <= config.output.verbosity <= 3):
         warnings.append(f"output.verbosity must be 0-3, got {config.output.verbosity}")
 

@@ -65,6 +65,64 @@ def test_incremental_parsing(tmp_path, history_db):
     assert events2[0].ip == "192.168.1.2"
 
 
+def test_parse_log_sets_log_source(tmp_path, history_db):
+    """Parsed events should include log_source for multi-log correlation."""
+    log_file = tmp_path / "auth.log"
+    log_file.write_text(
+        "Jan  1 00:00:00 server sshd[1]: Failed password for user1 from 192.168.1.1 port 22 ssh2\n"
+    )
+
+    daemon = WatchDaemon(
+        log_path=str(log_file),
+        interval="1h",
+        history_db=history_db
+    )
+
+    events = daemon.parse_log()
+    assert len(events) == 1
+    assert events[0].log_source == str(log_file)
+
+
+def test_watch_run_once_uses_ml_when_model_present(tmp_path, history_db, monkeypatch):
+    """Should attempt ML detection when a model is available."""
+    log_file = tmp_path / "auth.log"
+    log_file.write_text(
+        "Jan  1 00:00:00 server sshd[1]: Failed password for user1 from 192.168.1.1 port 22 ssh2\n"
+    )
+
+    model_path = tmp_path / "model.pkl"
+    model_path.write_bytes(b"dummy")
+
+    loaded = {}
+
+    class DummyML:
+        def load(self, path):
+            loaded["path"] = path
+
+        def detect(self, events, score_threshold=0.6):
+            return ["anomaly"]
+
+        def detect_drift(self, events, threshold=2.0):
+            return None
+
+    import vpsguard.ml.engine as ml_engine
+    monkeypatch.setattr(ml_engine, "MLEngine", DummyML)
+
+    daemon = WatchDaemon(
+        log_path=str(log_file),
+        interval="1h",
+        history_db=history_db,
+        model_path=str(model_path),
+        with_ml=True
+    )
+
+    from vpsguard.config import load_config
+    result = daemon.run_once(load_config())
+
+    assert result["anomalies"] == 1
+    assert loaded["path"] == model_path
+
+
 def test_log_rotation_detection(tmp_path, history_db):
     """Should detect log rotation and restart from beginning."""
     # Create a larger initial file to ensure we have a non-zero offset

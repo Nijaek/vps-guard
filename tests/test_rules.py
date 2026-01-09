@@ -647,6 +647,7 @@ class TestRuleEngine:
         result = engine.evaluate(events)
         assert len(result.violations) == 0  # Whitelisted IP
         assert "1.2.3.4" not in result.flagged_ips
+        assert len(result.clean_events) == len(events)  # Whitelisted events remain clean
     
     def test_disabled_rules_dont_run(self):
         """Test that disabled rules don't produce violations."""

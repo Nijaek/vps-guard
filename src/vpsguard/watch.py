@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 
-from vpsguard.parsers import get_parser
+from vpsguard.parsers import get_parser, enrich_with_source
 from vpsguard.models.events import WatchState, Severity
 from vpsguard.history import HistoryDB
 from vpsguard.daemon import DaemonManager
@@ -75,7 +75,10 @@ class WatchDaemon:
         interval: str = "1h",
         history_db: Optional[HistoryDB] = None,
         daemon_manager: Optional[DaemonManager] = None,
-        log_format: Optional[str] = None
+        log_format: Optional[str] = None,
+        model_path: Optional[str] = None,
+        with_ml: bool = True,
+        score_threshold: float = 0.6,
     ):
         """Initialize watch daemon.
 
@@ -91,6 +94,9 @@ class WatchDaemon:
         self.history_db = history_db or HistoryDB()
         self.daemon_manager = daemon_manager or DaemonManager()
         self.log_format = log_format or detect_log_format(log_path)
+        self.model_path = model_path
+        self.with_ml = with_ml
+        self.score_threshold = score_threshold
 
         self._state: Optional[WatchState] = None
 
@@ -185,6 +191,7 @@ class WatchDaemon:
         # Parse the new content
         if new_content.strip():
             parsed = parser.parse(new_content)
+            enrich_with_source(parsed, source=str(self.log_path))
             events = parsed.events
         else:
             events = []
@@ -198,7 +205,8 @@ class WatchDaemon:
     def should_alert(
         current_findings: list,
         last_counts: dict,
-        thresholds: dict
+        thresholds: dict,
+        anomaly_count: int = 0,
     ) -> bool:
         """Check if alert conditions are met.
 
@@ -227,8 +235,8 @@ class WatchDaemon:
 
         # Check anomaly threshold
         if thresholds.get('anomaly_threshold', 0) > 0:
-            # Count anomalies (would need to pass them separately)
-            pass
+            if anomaly_count >= thresholds['anomaly_threshold']:
+                return True
 
         return False
 
@@ -247,26 +255,96 @@ class WatchDaemon:
         events = self.parse_log()
 
         if not events:
-            return {"events": 0, "violations": 0, "anomalies": 0, "findings_counts": {}}
+            return {
+                "events": 0,
+                "violations": 0,
+                "anomalies": 0,
+                "findings_counts": {},
+                "alert_triggered": False,
+                "reports_written": [],
+            }
+
+        # Optional GeoIP lookups for geo-velocity detection
+        geo_data = None
+        if config.geoip.enabled:
+            try:
+                from vpsguard.geo import get_database_info, GeoIPReader
+
+                db_path = Path(config.geoip.database_path).expanduser()
+                db_info = get_database_info(db_path)
+                if db_info.exists:
+                    ips = {event.ip for event in events if event.ip}
+                    if ips:
+                        with GeoIPReader(db_info.path) as reader:
+                            geo_data = {ip: reader.lookup(ip) for ip in ips}
+            except Exception as e:
+                logger.debug(f"GeoIP lookup skipped: {e}")
 
         # Run rules
         rule_engine = RuleEngine(config)
-        output = rule_engine.evaluate(events)
+        output = rule_engine.evaluate(events, geo_data=geo_data)
         violations = output.violations
         clean_events = output.clean_events
 
         # Run ML if model available (optional)
         anomalies = []
+        baseline_drift = None
         try:
-            if hasattr(config, 'ml') and config.ml.model_path and Path(config.ml.model_path).exists():
+            if self.with_ml and self.model_path and Path(self.model_path).exists():
                 from vpsguard.ml.engine import MLEngine
-                ml_engine = MLEngine(config.ml)
-                anomalies = ml_engine.detect_anomalies(clean_events)
+                ml_engine = MLEngine()
+                ml_engine.load(Path(self.model_path))
+                anomalies = ml_engine.detect(clean_events, score_threshold=self.score_threshold)
+                baseline_drift = ml_engine.detect_drift(clean_events, threshold=2.0)
         except Exception as e:
             logger.debug(f"ML analysis skipped: {e}")
 
-        # Save state
+        # Generate report if thresholds are met
         state = self.get_state()
+        alert_triggered = self.should_alert(
+            violations,
+            state.last_findings_counts,
+            config.watch_schedule.alerts,
+            anomaly_count=len(anomalies),
+        )
+        reports_written: list[str] = []
+
+        if alert_triggered:
+            from vpsguard.reporters import get_reporter
+            from vpsguard.models.events import AnalysisReport
+
+            report = AnalysisReport(
+                timestamp=datetime.now(timezone.utc),
+                log_source=str(self.log_path),
+                total_events=len(events),
+                rule_violations=violations,
+                anomalies=anomalies,
+                baseline_drift=baseline_drift,
+                summary=None,
+                geo_data=geo_data,
+            )
+
+            output_dir = Path(config.watch_output.directory).expanduser()
+            output_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            stem = self.log_path.stem
+
+            ext_map = {
+                "terminal": "txt",
+                "markdown": "md",
+                "json": "json",
+                "html": "html",
+            }
+
+            for fmt in config.watch_output.formats:
+                reporter = get_reporter(fmt)
+                ext = ext_map.get(fmt, "txt")
+                file_name = f"vpsguard-{stem}-{timestamp}.{ext}"
+                output_path = output_dir / file_name
+                reporter.generate_to_file(report, str(output_path))
+                reports_written.append(str(output_path))
+
+        # Save state
         state.last_run_time = datetime.now(timezone.utc)
         state.run_count += 1
         state.last_findings_counts = {
@@ -281,5 +359,7 @@ class WatchDaemon:
             "events": len(events),
             "violations": len(violations),
             "anomalies": len(anomalies),
-            "findings_counts": state.last_findings_counts
+            "findings_counts": state.last_findings_counts,
+            "alert_triggered": alert_triggered,
+            "reports_written": reports_written,
         }

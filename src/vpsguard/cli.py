@@ -162,6 +162,43 @@ def _display_stats(events):
     console.print(Panel(stats_text, title="Statistics", border_style="blue"))
 
 
+def _load_geo_data(events, config, enabled: bool, output_format: str):
+    """Load GeoIP data for a set of events if enabled and database exists."""
+    if not enabled:
+        return None
+
+    from vpsguard.geo import get_database_info, GeoIPReader
+
+    db_path = Path(config.geoip.database_path).expanduser()
+    db_info = get_database_info(db_path)
+    if not db_info.exists:
+        if output_format != "json":
+            console.print("[yellow]Warning: GeoIP database not found[/yellow]")
+            console.print("[dim]Run 'vpsguard geoip download' to enable geolocation[/dim]")
+        return None
+
+    all_ips = {event.ip for event in events if event.ip}
+    if not all_ips:
+        return {}
+
+    try:
+        if output_format != "json":
+            console.print("[dim]Looking up IP locations...[/dim]")
+
+        with GeoIPReader(db_info.path) as reader:
+            geo_data = {ip: reader.lookup(ip) for ip in all_ips}
+
+        if output_format != "json":
+            known_count = sum(1 for loc in geo_data.values() if loc.is_known)
+            console.print(f"[green]GeoIP: {known_count}/{len(all_ips)} IPs located[/green]")
+
+        return geo_data
+    except Exception as e:
+        if output_format != "json":
+            console.print(f"[yellow]Warning: GeoIP lookup failed: {e}[/yellow]")
+        return None
+
+
 @app.command()
 def parse(
     file_path: str = typer.Argument(..., help="Path to log file or '-' for stdin"),
@@ -180,7 +217,7 @@ def parse(
             if not path.exists():
                 console.print(f"[red]Error: File not found: {file_path}[/red]")
                 raise typer.Exit(1)
-            content = path.read_text(encoding="utf-8")
+            content = path.read_text(encoding="utf-8", errors="replace")
             filename = path.name
 
         # Auto-detect format if not specified
@@ -561,7 +598,7 @@ def train(
             raise typer.Exit(1)
 
         console.print(f"[dim]Reading log file: {file_path}[/dim]")
-        content = path.read_text(encoding="utf-8")
+        content = path.read_text(encoding="utf-8", errors="replace")
 
         # Auto-detect format
         if input_format is None:
@@ -572,12 +609,14 @@ def train(
         parser = get_parser(input_format)
         console.print(f"[dim]Parsing logs...[/dim]")
         parsed = parser.parse(content)
+        enrich_with_source(parsed, source=str(path))
         console.print(f"[green]Parsed {len(parsed.events)} events[/green]")
 
         # Run rule engine to get clean events
         console.print(f"[dim]Running rule engine to filter attacks...[/dim]")
+        geo_data = _load_geo_data(parsed.events, vps_config, vps_config.geoip.enabled, "terminal")
         engine = RuleEngine(vps_config)
-        rule_output = engine.evaluate(parsed.events)
+        rule_output = engine.evaluate(parsed.events, geo_data=geo_data)
 
         console.print(f"[yellow]Found {len(rule_output.violations)} rule violations[/yellow]")
         console.print(f"[green]Clean events for training: {len(rule_output.clean_events)}[/green]")
@@ -625,10 +664,10 @@ def analyze(
     rules_only: bool = typer.Option(True, "--rules-only/--with-ml", help="Only run rule-based detection (skip ML)"),
     model: str = typer.Option("vpsguard_model.pkl", "--model", help="Path to ML model file"),
     verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Verbosity level (0=critical/high, 1=+medium, 2=all)"),
-    format: str = typer.Option("terminal", "--format", help="Output format: terminal, markdown, json, html"),
+    format: Optional[str] = typer.Option(None, "--format", help="Output format: terminal, markdown, json, html"),
     output: Optional[str] = typer.Option(None, "--output", help="Output file path (stdout if not specified)"),
     save_history: bool = typer.Option(False, "--save-history", help="Save run to history database for tracking"),
-    geoip: bool = typer.Option(False, "--geoip", "-g", help="Enable GeoIP lookups for IP geolocation"),
+    geoip: Optional[bool] = typer.Option(None, "--geoip/--no-geoip", "-g", help="Enable/disable GeoIP lookups for IP geolocation"),
 ):
     """Analyze log files for security threats. Supports multiple log files."""
     try:
@@ -642,17 +681,26 @@ def analyze(
         # Load configuration
         try:
             vps_config = load_config(config)
-            if format != "json":
-                if config:
-                    console.print(f"[dim]Loaded config from: {config}[/dim]")
-                else:
-                    console.print(f"[dim]Using default configuration[/dim]")
         except FileNotFoundError as e:
             console.print(f"[red]Error: {e}[/red]")
             raise typer.Exit(1)
         except ValueError as e:
             console.print(f"[red]Error: {e}[/red]")
             raise typer.Exit(1)
+
+        # Resolve defaults from config when CLI options are not provided
+        if format is None:
+            format = vps_config.output.format
+        if verbose == 0 and vps_config.output.verbosity:
+            verbose = vps_config.output.verbosity
+        if geoip is None:
+            geoip = vps_config.geoip.enabled
+
+        if format != "json":
+            if config:
+                console.print(f"[dim]Loaded config from: {config}[/dim]")
+            else:
+                console.print(f"[dim]Using default configuration[/dim]")
 
         # Collect all events from all files
         all_events: List[AuthEvent] = []
@@ -670,7 +718,7 @@ def analyze(
                 if not path.exists():
                     console.print(f"[red]Error: File not found: {file_path}[/red]")
                     raise typer.Exit(1)
-                content = path.read_text(encoding="utf-8")
+                content = path.read_text(encoding="utf-8", errors="replace")
                 filename = path.name
                 log_source = str(path)
 
@@ -715,12 +763,15 @@ def analyze(
         if format != "json":
             console.print(f"[dim]Total events from all sources: {len(all_events)}[/dim]")
 
+        # GeoIP lookups if enabled (used by geo-velocity rule + reporting)
+        geo_data = _load_geo_data(all_events, vps_config, bool(geoip), format)
+
         # Run rule engine
         if format != "json":
             console.print(f"[dim]Running rule engine...[/dim]")
 
         engine = RuleEngine(vps_config)
-        rule_output = engine.evaluate(all_events)
+        rule_output = engine.evaluate(all_events, geo_data=geo_data)
 
         # Filter violations by verbosity level
         filtered_violations = []
@@ -778,42 +829,6 @@ def analyze(
                     if format != "json":
                         console.print(f"[yellow]Warning: ML detection failed: {e}[/yellow]")
                         console.print(f"[yellow]Continuing with rule-based detection only...[/yellow]")
-
-        # GeoIP lookups if enabled
-        geo_data = None
-        if geoip:
-            from vpsguard.geo import get_database_info, GeoIPReader
-
-            db_info = get_database_info()
-            if not db_info.exists:
-                if format != "json":
-                    console.print(f"[yellow]Warning: GeoIP database not found[/yellow]")
-                    console.print(f"[dim]Run 'vpsguard geoip download' to enable geolocation[/dim]")
-            else:
-                try:
-                    if format != "json":
-                        console.print(f"[dim]Looking up IP locations...[/dim]")
-
-                    # Collect all IPs from violations and anomalies
-                    all_ips = set()
-                    for v in filtered_violations:
-                        if v.ip:
-                            all_ips.add(v.ip)
-                    for a in anomalies:
-                        if a.ip:
-                            all_ips.add(a.ip)
-
-                    # Look up locations
-                    with GeoIPReader(db_info.path) as reader:
-                        geo_data = {ip: reader.lookup(ip) for ip in all_ips}
-
-                    if format != "json":
-                        known_count = sum(1 for loc in geo_data.values() if loc.is_known)
-                        console.print(f"[green]GeoIP: {known_count}/{len(all_ips)} IPs located[/green]")
-
-                except Exception as e:
-                    if format != "json":
-                        console.print(f"[yellow]Warning: GeoIP lookup failed: {e}[/yellow]")
 
         # Build analysis report
         analysis_report = AnalysisReport(
@@ -873,6 +888,8 @@ def watch(
     stop: bool = typer.Option(False, "--stop", help="Stop running daemon"),
     config: Optional[str] = typer.Option(None, "--config", "-c", help="Path to config file"),
     log_format: Optional[str] = typer.Option(None, "--format", help="Log format: auth.log, secure, journald, nginx, syslog"),
+    model: str = typer.Option("vpsguard_model.pkl", "--model", help="Path to ML model file"),
+    with_ml: bool = typer.Option(True, "--with-ml/--rules-only", help="Enable ML detection when a model is available"),
 ):
     """Run scheduled batch analysis on log file.
 
@@ -942,7 +959,9 @@ def watch(
     daemon = WatchDaemon(
         log_path=str(log_path),
         interval=watch_interval,
-        log_format=log_format
+        log_format=log_format,
+        model_path=model if with_ml else None,
+        with_ml=with_ml,
     )
 
     # Run once mode (for testing/debug)

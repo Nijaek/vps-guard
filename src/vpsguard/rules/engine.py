@@ -83,7 +83,6 @@ class RuleEngine:
             - flagged_ips: Set of IPs that triggered rules
         """
         all_violations: list[RuleViolation] = []
-        flagged_event_ids: set[int] = set()  # Track which events were flagged
 
         # Run all enabled standard rules
         for rule in self.rules:
@@ -91,12 +90,6 @@ class RuleEngine:
                 continue
 
             violations = rule.evaluate(events)
-
-            # Track which events were flagged by this rule
-            for violation in violations:
-                for event in violation.affected_events:
-                    flagged_event_ids.add(id(event))
-
             all_violations.extend(violations)
 
         # Run geo velocity rule if geo_data is provided
@@ -104,9 +97,6 @@ class RuleEngine:
             geo_rule = self._initialize_geo_rule()
             if geo_rule.enabled:
                 geo_violations = geo_rule.evaluate(events, geo_data)
-                for violation in geo_violations:
-                    for event in violation.affected_events:
-                        flagged_event_ids.add(id(event))
                 all_violations.extend(geo_violations)
         
         # Filter out whitelisted IPs
@@ -120,12 +110,15 @@ class RuleEngine:
             filtered_violations.append(violation)
             flagged_ips.add(violation.ip)
         
-        # Separate clean events (not flagged by any rule)
-        # These are used for ML training in Task 7
-        clean_events = [
-            event for event in events 
-            if id(event) not in flagged_event_ids
-        ]
+        # Track which events were flagged by non-whitelisted violations
+        flagged_event_ids: set[int] = set()
+        for violation in filtered_violations:
+            for event in violation.affected_events:
+                flagged_event_ids.add(id(event))
+
+        # Separate clean events (not flagged by any non-whitelisted rule)
+        # These are used for ML training
+        clean_events = [event for event in events if id(event) not in flagged_event_ids]
         
         return RuleEngineOutput(
             violations=filtered_violations,
