@@ -1,10 +1,12 @@
 """Tests for history database and watch state persistence."""
 
+import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
-from vpsguard.history import HistoryDB
+from vpsguard.history import HistoryDB, validate_db_path
 from vpsguard.models.events import (
     AnalysisReport,
     AnomalyResult,
@@ -231,3 +233,57 @@ def test_get_top_offenders_empty(history_db):
     offenders = history_db.get_top_offenders(days=30, limit=10)
 
     assert offenders == []
+
+
+class TestValidateDbPath:
+    """Tests for validate_db_path function."""
+
+    def test_path_traversal_rejected(self):
+        """Path traversal attempts should be rejected."""
+        with pytest.raises(ValueError) as exc_info:
+            validate_db_path(Path("../../../etc/passwd"))
+
+        assert "Path traversal not allowed" in str(exc_info.value)
+
+    def test_path_traversal_in_middle_rejected(self):
+        """Path traversal in the middle of path should be rejected."""
+        with pytest.raises(ValueError) as exc_info:
+            validate_db_path(Path("safe/path/../../../etc/passwd"))
+
+        assert "Path traversal not allowed" in str(exc_info.value)
+
+    def test_relative_path_allowed(self):
+        """Relative paths without traversal should be allowed."""
+        path = Path("my_database.db")
+        result = validate_db_path(path)
+        assert result.is_absolute()
+
+    def test_temp_directory_allowed(self):
+        """Paths in temp directory should be allowed."""
+        temp_dir = Path(tempfile.gettempdir())
+        path = temp_dir / "test_vpsguard" / "history.db"
+        result = validate_db_path(path)
+        assert result == path.resolve()
+
+    def test_home_directory_allowed(self):
+        """Paths in home directory should be allowed."""
+        home = Path.home()
+        path = home / ".vpsguard" / "history.db"
+        result = validate_db_path(path)
+        assert result == path.resolve()
+
+    def test_cwd_allowed(self):
+        """Paths in current working directory should be allowed."""
+        cwd = Path.cwd()
+        path = cwd / "test_db.db"
+        result = validate_db_path(path)
+        assert result == path.resolve()
+
+    def test_historydb_rejects_traversal(self, tmp_path):
+        """HistoryDB constructor should reject path traversal."""
+        bad_path = tmp_path / ".." / ".." / "etc" / "malicious.db"
+
+        with pytest.raises(ValueError) as exc_info:
+            HistoryDB(db_path=bad_path)
+
+        assert "Path traversal not allowed" in str(exc_info.value)

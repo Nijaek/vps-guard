@@ -23,6 +23,7 @@ from vpsguard.reporters import (
     TerminalReporter,
     get_reporter,
 )
+from vpsguard.reporters.base import validate_report_path
 from vpsguard.reporters.html import HTMLReporter
 
 
@@ -735,3 +736,53 @@ class TestJSONReporterWithGeoData:
         # Unknown location should not add location field
         violation = data["rule_violations"][0]
         assert "location" not in violation
+
+
+class TestValidateReportPath:
+    """Tests for validate_report_path function."""
+
+    def test_path_traversal_rejected(self):
+        """Path traversal attempts should be rejected."""
+        with pytest.raises(ValueError) as exc_info:
+            validate_report_path("../../../etc/passwd")
+
+        assert "Path traversal not allowed" in str(exc_info.value)
+
+    def test_path_traversal_in_middle_rejected(self):
+        """Path traversal in the middle of path should be rejected."""
+        with pytest.raises(ValueError) as exc_info:
+            validate_report_path("safe/path/../../../etc/passwd")
+
+        assert "Path traversal not allowed" in str(exc_info.value)
+
+    def test_relative_path_allowed(self):
+        """Relative paths without traversal should be allowed."""
+        result = validate_report_path("my_report.html")
+        assert result.is_absolute()
+
+    def test_temp_directory_allowed(self):
+        """Paths in temp directory should be allowed."""
+        temp_dir = Path(tempfile.gettempdir())
+        path = str(temp_dir / "test_report.html")
+        result = validate_report_path(path)
+        assert result == Path(path).resolve()
+
+    def test_home_directory_allowed(self):
+        """Paths in home directory should be allowed."""
+        home = Path.home()
+        path = str(home / ".vpsguard" / "report.html")
+        result = validate_report_path(path)
+        assert result == Path(path).resolve()
+
+    def test_cwd_allowed(self):
+        """Paths in current working directory should be allowed."""
+        cwd = Path.cwd()
+        path = str(cwd / "test_report.json")
+        result = validate_report_path(path)
+        assert result == Path(path).resolve()
+
+    def test_nested_relative_path_allowed(self):
+        """Nested relative paths should be allowed."""
+        result = validate_report_path("reports/security/report.html")
+        assert result.is_absolute()
+        assert "reports" in str(result)

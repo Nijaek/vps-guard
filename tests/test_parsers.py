@@ -15,6 +15,19 @@ from vpsguard.parsers import (
     enrich_with_source,
     get_parser,
 )
+from vpsguard.parsers.base import (
+    FileTooLargeError,
+    safe_int,
+    safe_pid,
+    safe_port,
+    validate_file_size,
+    validate_ip,
+    MAX_LOG_FILE_SIZE,
+    MIN_PORT,
+    MAX_PORT,
+    MIN_PID,
+    MAX_PID,
+)
 
 
 class TestAuthLogParser:
@@ -631,3 +644,204 @@ Jan 15 03:12:49 server sshd[1236]: Accepted password for ubuntu from 10.0.0.5 po
 
         # Should be the same object (modified in place)
         assert enriched is parsed
+
+
+class TestValidateIp:
+    """Tests for validate_ip function."""
+
+    def test_valid_ipv4(self):
+        """Test valid IPv4 addresses."""
+        assert validate_ip("192.168.1.100") == "192.168.1.100"
+        assert validate_ip("10.0.0.1") == "10.0.0.1"
+        assert validate_ip("8.8.8.8") == "8.8.8.8"
+        assert validate_ip("0.0.0.0") == "0.0.0.0"
+        assert validate_ip("255.255.255.255") == "255.255.255.255"
+
+    def test_valid_ipv6(self):
+        """Test valid IPv6 addresses."""
+        assert validate_ip("::1") == "::1"
+        assert validate_ip("2001:db8::1") == "2001:db8::1"
+        assert validate_ip("fe80::1") == "fe80::1"
+
+    def test_ipv4_with_whitespace(self):
+        """Test that whitespace is stripped."""
+        assert validate_ip("  192.168.1.1  ") == "192.168.1.1"
+        assert validate_ip("\t10.0.0.1\n") == "10.0.0.1"
+
+    def test_invalid_ip(self):
+        """Test invalid IP addresses return None."""
+        assert validate_ip("invalid") is None
+        assert validate_ip("256.256.256.256") is None
+        assert validate_ip("192.168.1.999") is None
+        assert validate_ip("192.168.1") is None
+        assert validate_ip("not.an.ip.address") is None
+
+    def test_empty_and_none(self):
+        """Test empty string and edge cases."""
+        assert validate_ip("") is None
+        assert validate_ip("   ") is None
+
+
+class TestSafeInt:
+    """Tests for safe_int function."""
+
+    def test_valid_integer_in_range(self):
+        """Test valid integers within range."""
+        assert safe_int("50", 0, 100) == 50
+        assert safe_int("0", 0, 100) == 0
+        assert safe_int("100", 0, 100) == 100
+
+    def test_integer_below_range(self):
+        """Test integers below minimum return default."""
+        assert safe_int("-1", 0, 100) is None
+        assert safe_int("0", 1, 100) is None
+        assert safe_int("-1", 0, 100, default=0) == 0
+
+    def test_integer_above_range(self):
+        """Test integers above maximum return default."""
+        assert safe_int("101", 0, 100) is None
+        assert safe_int("1000", 0, 100) is None
+        assert safe_int("101", 0, 100, default=100) == 100
+
+    def test_invalid_string(self):
+        """Test non-numeric strings return default."""
+        assert safe_int("not_a_number", 0, 100) is None
+        assert safe_int("12.34", 0, 100) is None
+        assert safe_int("12abc", 0, 100) is None
+        assert safe_int("invalid", 0, 100, default=42) == 42
+
+    def test_empty_string(self):
+        """Test empty string returns default."""
+        assert safe_int("", 0, 100) is None
+        assert safe_int("", 0, 100, default=0) == 0
+
+
+class TestSafePort:
+    """Tests for safe_port function."""
+
+    def test_valid_ports(self):
+        """Test valid port numbers."""
+        assert safe_port("22") == 22
+        assert safe_port("80") == 80
+        assert safe_port("443") == 443
+        assert safe_port("8080") == 8080
+        assert safe_port("1") == 1
+        assert safe_port("65535") == 65535
+
+    def test_port_below_range(self):
+        """Test port 0 and negative values return None."""
+        assert safe_port("0") is None
+        assert safe_port("-1") is None
+        assert safe_port("-22") is None
+
+    def test_port_above_range(self):
+        """Test ports above 65535 return None."""
+        assert safe_port("65536") is None
+        assert safe_port("99999") is None
+        assert safe_port("100000") is None
+
+    def test_invalid_port_string(self):
+        """Test invalid port strings return None."""
+        assert safe_port("ssh") is None
+        assert safe_port("http") is None
+        assert safe_port("22.5") is None
+
+
+class TestSafePid:
+    """Tests for safe_pid function."""
+
+    def test_valid_pids(self):
+        """Test valid PID numbers."""
+        assert safe_pid("1") == 1
+        assert safe_pid("1234") == 1234
+        assert safe_pid("32768") == 32768
+        assert safe_pid(str(MAX_PID)) == MAX_PID
+
+    def test_pid_below_range(self):
+        """Test PID 0 and negative values return None."""
+        assert safe_pid("0") is None
+        assert safe_pid("-1") is None
+        assert safe_pid("-1234") is None
+
+    def test_pid_above_range(self):
+        """Test PIDs above MAX_PID return None."""
+        assert safe_pid(str(MAX_PID + 1)) is None
+        assert safe_pid("99999999") is None
+
+    def test_invalid_pid_string(self):
+        """Test invalid PID strings return None."""
+        assert safe_pid("init") is None
+        assert safe_pid("systemd") is None
+        assert safe_pid("") is None
+
+
+class TestValidateFileSize:
+    """Tests for validate_file_size and FileTooLargeError."""
+
+    def test_file_within_limit(self, tmp_path):
+        """Test file within size limit returns size."""
+        test_file = tmp_path / "small.log"
+        test_file.write_text("Small log content\n" * 100)
+
+        size = validate_file_size(str(test_file))
+        assert size == test_file.stat().st_size
+
+    def test_file_exceeds_limit(self, tmp_path):
+        """Test file exceeding limit raises FileTooLargeError."""
+        test_file = tmp_path / "large.log"
+        test_file.write_text("X" * 1000)  # 1KB file
+
+        # Use a small max_size for testing
+        with pytest.raises(FileTooLargeError) as exc_info:
+            validate_file_size(str(test_file), max_size=500)
+
+        assert "too large" in str(exc_info.value).lower()
+        assert "0.0 MB" in str(exc_info.value) or "0.001" in str(exc_info.value).lower()
+
+    def test_file_not_found(self, tmp_path):
+        """Test missing file raises FileNotFoundError."""
+        nonexistent = tmp_path / "does_not_exist.log"
+
+        with pytest.raises(FileNotFoundError):
+            validate_file_size(str(nonexistent))
+
+    def test_custom_max_size(self, tmp_path):
+        """Test custom max_size parameter."""
+        test_file = tmp_path / "test.log"
+        test_file.write_text("Content")
+
+        # Should work with larger limit
+        size = validate_file_size(str(test_file), max_size=1000)
+        assert size == test_file.stat().st_size
+
+    def test_file_too_large_error_message(self, tmp_path):
+        """Test FileTooLargeError contains helpful message."""
+        test_file = tmp_path / "error_test.log"
+        test_file.write_text("X" * 2000)
+
+        with pytest.raises(FileTooLargeError) as exc_info:
+            validate_file_size(str(test_file), max_size=1000)
+
+        error_message = str(exc_info.value)
+        assert "Log file too large" in error_message
+        assert "max" in error_message.lower()
+
+
+class TestConstants:
+    """Tests for base module constants."""
+
+    def test_port_range_constants(self):
+        """Test port range constants are valid."""
+        assert MIN_PORT == 1
+        assert MAX_PORT == 65535
+        assert MIN_PORT < MAX_PORT
+
+    def test_pid_range_constants(self):
+        """Test PID range constants are valid."""
+        assert MIN_PID == 1
+        assert MAX_PID == 4194304
+        assert MIN_PID < MAX_PID
+
+    def test_max_file_size_constant(self):
+        """Test max file size is 100 MB."""
+        assert MAX_LOG_FILE_SIZE == 100 * 1024 * 1024
