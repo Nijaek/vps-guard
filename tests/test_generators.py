@@ -154,11 +154,15 @@ class TestSyntheticLogGenerator:
 
     def test_seed_reproducibility(self):
         """Test that same seed produces same output."""
-        config1 = GeneratorConfig(entries=100, seed=42)
+        # Use fixed time range to ensure complete reproducibility
+        start = datetime(2024, 1, 1, 0, 0, 0)
+        end = datetime(2024, 1, 2, 0, 0, 0)
+
+        config1 = GeneratorConfig(entries=100, seed=42, start_time=start, end_time=end)
         gen1 = SyntheticLogGenerator(config1)
         output1 = gen1.generate()
 
-        config2 = GeneratorConfig(entries=100, seed=42)
+        config2 = GeneratorConfig(entries=100, seed=42, start_time=start, end_time=end)
         gen2 = SyntheticLogGenerator(config2)
         output2 = gen2.generate()
 
