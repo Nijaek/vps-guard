@@ -10,6 +10,56 @@ from dataclasses import asdict
 from vpsguard.models.events import AnalysisReport, RuleViolation, AnomalyResult, Severity, Confidence, WatchState
 
 
+def validate_db_path(path: Path) -> Path:
+    """Validate that a database path is safe to use.
+
+    Prevents path traversal attacks by ensuring paths are within safe directories.
+
+    Args:
+        path: The path to validate.
+
+    Returns:
+        Validated Path object.
+
+    Raises:
+        ValueError: If the path uses traversal or is in a restricted location.
+    """
+    # Check for path traversal attempts
+    if '..' in path.parts:
+        raise ValueError(
+            f"Path traversal not allowed: {path}. "
+            "Use direct paths without '..' components."
+        )
+
+    # Get the resolved absolute path
+    try:
+        resolved = path.resolve()
+    except (OSError, ValueError) as e:
+        raise ValueError(f"Invalid path: {path} - {e}")
+
+    # Define safe base directories
+    cwd = Path.cwd().resolve()
+    home = Path.home().resolve()
+    vpsguard_dir = (home / ".vpsguard").resolve()
+
+    # For relative paths, they resolve relative to cwd (safe)
+    if not path.is_absolute():
+        return resolved
+
+    # For absolute paths, check against safe directories
+    safe_bases = [cwd, home, vpsguard_dir]
+    for safe_base in safe_bases:
+        try:
+            resolved.relative_to(safe_base)
+            return resolved
+        except ValueError:
+            continue
+
+    raise ValueError(
+        f"Database path must be within current directory, home, or ~/.vpsguard: {path}"
+    )
+
+
 class HistoryDB:
     """SQLite database for storing analysis history.
 
@@ -27,8 +77,15 @@ class HistoryDB:
         Args:
             db_path: Path to the SQLite database file.
                      Defaults to ~/.vpsguard/history.db
+
+        Raises:
+            ValueError: If db_path uses path traversal or is in a restricted location.
         """
-        self.db_path = db_path or self.DEFAULT_PATH
+        # Validate path if provided (DEFAULT_PATH is always safe)
+        if db_path is not None:
+            self.db_path = validate_db_path(db_path)
+        else:
+            self.db_path = self.DEFAULT_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 

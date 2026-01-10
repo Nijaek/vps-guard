@@ -20,6 +20,7 @@ from vpsguard.geo.velocity import (
     format_velocity,
     format_travel_summary,
     TravelEvent,
+    MAX_VELOCITY_KM_H,
 )
 from vpsguard.config import load_config, VPSGuardConfig, GeoIPConfig, GeoVelocityConfig
 from vpsguard.rules.geo_velocity import GeoVelocityRule
@@ -249,8 +250,9 @@ class TestDeleteDatabase:
 class TestDownloadDatabase:
     """Tests for download_database function."""
 
+    @patch('vpsguard.geo.database._validate_mmdb_file', return_value=True)
     @patch('urllib.request.urlopen')
-    def test_download_success(self, mock_urlopen, tmp_path):
+    def test_download_success(self, mock_urlopen, mock_validate, tmp_path):
         """Test successful database download."""
         db_path = tmp_path / "test.mmdb"
 
@@ -272,8 +274,9 @@ class TestDownloadDatabase:
         assert db_path.exists()
         assert db_path.stat().st_size >= 1_000_000
 
+    @patch('vpsguard.geo.database._validate_mmdb_file', return_value=True)
     @patch('urllib.request.urlopen')
-    def test_download_with_progress_callback(self, mock_urlopen, tmp_path):
+    def test_download_with_progress_callback(self, mock_urlopen, mock_validate, tmp_path):
         """Test download with progress callback."""
         db_path = tmp_path / "test.mmdb"
 
@@ -312,8 +315,9 @@ class TestDownloadDatabase:
         with pytest.raises(RuntimeError, match="Failed to download"):
             download_database(db_path)
 
+    @patch('vpsguard.geo.database._validate_mmdb_file', return_value=True)
     @patch('urllib.request.urlopen')
-    def test_download_network_error_retries(self, mock_urlopen, tmp_path):
+    def test_download_network_error_retries(self, mock_urlopen, mock_validate, tmp_path):
         """Test that download retries on network error."""
         db_path = tmp_path / "test.mmdb"
 
@@ -476,7 +480,7 @@ class TestCalculateVelocity:
         assert 650 < velocity < 750
 
     def test_instant_teleport(self):
-        """Test velocity is infinite for instant travel."""
+        """Test velocity is MAX_VELOCITY_KM_H for instant travel (JSON-safe)."""
         nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
         london = GeoLocation(latitude=51.5074, longitude=-0.1278)
 
@@ -484,7 +488,7 @@ class TestCalculateVelocity:
         time2 = datetime(2024, 1, 1, 10, 0, 0)  # Same time
 
         velocity = calculate_velocity(nyc, london, time1, time2)
-        assert velocity == float('inf')
+        assert velocity == MAX_VELOCITY_KM_H
 
     def test_same_location_same_time(self):
         """Test velocity is 0 for same location at same time."""
@@ -523,8 +527,8 @@ class TestFormatVelocity:
         assert "k km/h" in result  # Should use k notation
 
     def test_infinite_velocity(self):
-        """Test formatting infinite velocity."""
-        assert format_velocity(float('inf')) == "instantaneous"
+        """Test formatting MAX_VELOCITY_KM_H (represents instantaneous)."""
+        assert format_velocity(MAX_VELOCITY_KM_H) == "instantaneous"
 
 
 class TestGeoVelocityRule:
@@ -941,7 +945,7 @@ class TestAnalyzeUserTravel:
         assert 650 < event.velocity_km_h < 750
 
     def test_instant_travel_infinite_velocity(self):
-        """Test instant travel results in infinite velocity."""
+        """Test instant travel results in MAX_VELOCITY_KM_H (JSON-safe)."""
         nyc = GeoLocation(latitude=40.7128, longitude=-74.0060, country_code="US")
         london = GeoLocation(latitude=51.5074, longitude=-0.1278, country_code="GB")
         same_time = datetime(2024, 1, 1, 10, 0)
@@ -952,7 +956,7 @@ class TestAnalyzeUserTravel:
 
         result = analyze_user_travel(events, "admin")
         assert len(result) == 1
-        assert result[0].velocity_km_h == float('inf')
+        assert result[0].velocity_km_h == MAX_VELOCITY_KM_H
 
     def test_multiple_travels(self):
         """Test multiple travel events."""

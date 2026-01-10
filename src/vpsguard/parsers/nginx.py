@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import TextIO, Optional
 from vpsguard.models.events import AuthEvent, EventType, ParsedLog
-from vpsguard.parsers.base import validate_file_size
+from vpsguard.parsers.base import validate_file_size, validate_ip
 
 
 class NginxAccessLogParser:
@@ -173,6 +173,11 @@ class NginxAccessLogParser:
 
         ip, ident, user, timestamp_str, request, status, bytes_sent, referer, user_agent = match.groups()
 
+        # Validate IP address
+        validated_ip = validate_ip(ip)
+        if not validated_ip:
+            return None  # Skip events with invalid IPs
+
         # Parse timestamp: 31/Dec/2024:10:00:00 +0000
         try:
             timestamp = datetime.strptime(timestamp_str, "%d/%b/%Y:%H:%M:%S %z")
@@ -199,7 +204,7 @@ class NginxAccessLogParser:
         return AuthEvent(
             timestamp=timestamp,
             event_type=event_type,
-            ip=ip,
+            ip=validated_ip,
             username=username,
             success=(200 <= status_code < 400),
             raw_line=line,

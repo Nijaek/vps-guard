@@ -1,10 +1,10 @@
 """Parser for Debian/Ubuntu auth.log format."""
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TextIO, Optional
 from vpsguard.models.events import AuthEvent, EventType, ParsedLog
-from vpsguard.parsers.base import validate_file_size
+from vpsguard.parsers.base import validate_file_size, validate_ip, safe_port, safe_pid
 
 
 class AuthLogParser:
@@ -114,9 +114,17 @@ class AuthLogParser:
         r"COMMAND=(.+)"  # command
     )
 
-    def __init__(self):
-        """Initialize the auth.log parser."""
+    def __init__(self, base_year: Optional[int] = None):
+        """Initialize the auth.log parser.
+
+        Args:
+            base_year: Year to use for timestamps (syslog format lacks year).
+                      If None, uses current year with rollover detection.
+                      Set explicitly when parsing archived logs from previous years.
+        """
+        self.base_year = base_year
         self.current_year = datetime.now().year
+        self._last_timestamp: Optional[datetime] = None
 
     def parse(self, content: str) -> ParsedLog:
         """Parse log content string and return structured events.
@@ -200,20 +208,27 @@ class AuthLogParser:
 
         Returns:
             AuthEvent if line matches a known pattern, None otherwise
+
+        Note:
+            IP addresses and port/PID numbers are validated. Events with
+            invalid IPs are skipped. Invalid ports/PIDs are set to None.
         """
         # Try failed password for invalid user
         match = self.FAILED_PASSWORD_INVALID.match(line)
         if match:
             timestamp_str, hostname, pid, username, ip, port = match.groups()
+            validated_ip = validate_ip(ip)
+            if not validated_ip:
+                return None  # Skip events with invalid IPs
             return AuthEvent(
                 timestamp=self._parse_timestamp(timestamp_str),
                 event_type=EventType.FAILED_LOGIN,
-                ip=ip,
+                ip=validated_ip,
                 username=username,
                 success=False,
                 raw_line=line,
-                port=int(port),
-                pid=int(pid),
+                port=safe_port(port),
+                pid=safe_pid(pid),
                 service="sshd",
             )
 
@@ -221,15 +236,18 @@ class AuthLogParser:
         match = self.FAILED_PASSWORD.match(line)
         if match:
             timestamp_str, hostname, pid, username, ip, port = match.groups()
+            validated_ip = validate_ip(ip)
+            if not validated_ip:
+                return None
             return AuthEvent(
                 timestamp=self._parse_timestamp(timestamp_str),
                 event_type=EventType.FAILED_LOGIN,
-                ip=ip,
+                ip=validated_ip,
                 username=username,
                 success=False,
                 raw_line=line,
-                port=int(port),
-                pid=int(pid),
+                port=safe_port(port),
+                pid=safe_pid(pid),
                 service="sshd",
             )
 
@@ -237,15 +255,18 @@ class AuthLogParser:
         match = self.INVALID_USER.match(line)
         if match:
             timestamp_str, hostname, pid, username, ip, port = match.groups()
+            validated_ip = validate_ip(ip)
+            if not validated_ip:
+                return None
             return AuthEvent(
                 timestamp=self._parse_timestamp(timestamp_str),
                 event_type=EventType.INVALID_USER,
-                ip=ip,
+                ip=validated_ip,
                 username=username,
                 success=False,
                 raw_line=line,
-                port=int(port) if port else None,
-                pid=int(pid),
+                port=safe_port(port) if port else None,
+                pid=safe_pid(pid),
                 service="sshd",
             )
 
@@ -253,15 +274,18 @@ class AuthLogParser:
         match = self.ACCEPTED_PASSWORD.match(line)
         if match:
             timestamp_str, hostname, pid, username, ip, port = match.groups()
+            validated_ip = validate_ip(ip)
+            if not validated_ip:
+                return None
             return AuthEvent(
                 timestamp=self._parse_timestamp(timestamp_str),
                 event_type=EventType.SUCCESSFUL_LOGIN,
-                ip=ip,
+                ip=validated_ip,
                 username=username,
                 success=True,
                 raw_line=line,
-                port=int(port),
-                pid=int(pid),
+                port=safe_port(port),
+                pid=safe_pid(pid),
                 service="sshd",
             )
 
@@ -269,15 +293,18 @@ class AuthLogParser:
         match = self.ACCEPTED_PUBLICKEY.match(line)
         if match:
             timestamp_str, hostname, pid, username, ip, port = match.groups()
+            validated_ip = validate_ip(ip)
+            if not validated_ip:
+                return None
             return AuthEvent(
                 timestamp=self._parse_timestamp(timestamp_str),
                 event_type=EventType.SUCCESSFUL_LOGIN,
-                ip=ip,
+                ip=validated_ip,
                 username=username,
                 success=True,
                 raw_line=line,
-                port=int(port),
-                pid=int(pid),
+                port=safe_port(port),
+                pid=safe_pid(pid),
                 service="sshd",
             )
 
@@ -285,15 +312,18 @@ class AuthLogParser:
         match = self.CONNECTION_CLOSED.match(line)
         if match:
             timestamp_str, hostname, pid, ip, port = match.groups()
+            validated_ip = validate_ip(ip)
+            if not validated_ip:
+                return None
             return AuthEvent(
                 timestamp=self._parse_timestamp(timestamp_str),
                 event_type=EventType.DISCONNECT,
-                ip=ip,
+                ip=validated_ip,
                 username=None,
                 success=False,
                 raw_line=line,
-                port=int(port),
-                pid=int(pid),
+                port=safe_port(port),
+                pid=safe_pid(pid),
                 service="sshd",
             )
 
@@ -301,15 +331,18 @@ class AuthLogParser:
         match = self.DISCONNECTED.match(line)
         if match:
             timestamp_str, hostname, pid, ip, port = match.groups()
+            validated_ip = validate_ip(ip)
+            if not validated_ip:
+                return None
             return AuthEvent(
                 timestamp=self._parse_timestamp(timestamp_str),
                 event_type=EventType.DISCONNECT,
-                ip=ip,
+                ip=validated_ip,
                 username=None,
                 success=False,
                 raw_line=line,
-                port=int(port),
-                pid=int(pid),
+                port=safe_port(port),
+                pid=safe_pid(pid),
                 service="sshd",
             )
 

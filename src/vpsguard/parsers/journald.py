@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from typing import TextIO, Optional
 from vpsguard.models.events import AuthEvent, EventType, ParsedLog
-from vpsguard.parsers.base import validate_file_size
+from vpsguard.parsers.base import validate_file_size, validate_ip, safe_port, safe_pid
 
 
 class JournaldParser:
@@ -220,7 +220,7 @@ class JournaldParser:
         if service not in ("sshd", "sudo"):
             return None
 
-        pid_int = int(pid) if pid else None
+        pid_int = safe_pid(pid) if pid else None
 
         # Handle sshd messages
         if service == "sshd":
@@ -228,14 +228,17 @@ class JournaldParser:
             match = self.FAILED_PASSWORD_INVALID.search(message)
             if match:
                 username, ip, port = match.groups()
+                validated_ip = validate_ip(ip)
+                if not validated_ip:
+                    return None  # Skip events with invalid IPs
                 return AuthEvent(
                     timestamp=timestamp,
                     event_type=EventType.FAILED_LOGIN,
-                    ip=ip,
+                    ip=validated_ip,
                     username=username,
                     success=False,
                     raw_line=raw_line,
-                    port=int(port),
+                    port=safe_port(port),
                     pid=pid_int,
                     service=service,
                 )
@@ -244,14 +247,17 @@ class JournaldParser:
             match = self.FAILED_PASSWORD.search(message)
             if match:
                 username, ip, port = match.groups()
+                validated_ip = validate_ip(ip)
+                if not validated_ip:
+                    return None
                 return AuthEvent(
                     timestamp=timestamp,
                     event_type=EventType.FAILED_LOGIN,
-                    ip=ip,
+                    ip=validated_ip,
                     username=username,
                     success=False,
                     raw_line=raw_line,
-                    port=int(port),
+                    port=safe_port(port),
                     pid=pid_int,
                     service=service,
                 )
@@ -260,14 +266,17 @@ class JournaldParser:
             match = self.INVALID_USER.search(message)
             if match:
                 username, ip, port = match.groups()
+                validated_ip = validate_ip(ip)
+                if not validated_ip:
+                    return None
                 return AuthEvent(
                     timestamp=timestamp,
                     event_type=EventType.INVALID_USER,
-                    ip=ip,
+                    ip=validated_ip,
                     username=username,
                     success=False,
                     raw_line=raw_line,
-                    port=int(port) if port else None,
+                    port=safe_port(port) if port else None,
                     pid=pid_int,
                     service=service,
                 )
@@ -276,14 +285,17 @@ class JournaldParser:
             match = self.ACCEPTED_PASSWORD.search(message)
             if match:
                 username, ip, port = match.groups()
+                validated_ip = validate_ip(ip)
+                if not validated_ip:
+                    return None
                 return AuthEvent(
                     timestamp=timestamp,
                     event_type=EventType.SUCCESSFUL_LOGIN,
-                    ip=ip,
+                    ip=validated_ip,
                     username=username,
                     success=True,
                     raw_line=raw_line,
-                    port=int(port),
+                    port=safe_port(port),
                     pid=pid_int,
                     service=service,
                 )
@@ -292,14 +304,17 @@ class JournaldParser:
             match = self.ACCEPTED_PUBLICKEY.search(message)
             if match:
                 username, ip, port = match.groups()
+                validated_ip = validate_ip(ip)
+                if not validated_ip:
+                    return None
                 return AuthEvent(
                     timestamp=timestamp,
                     event_type=EventType.SUCCESSFUL_LOGIN,
-                    ip=ip,
+                    ip=validated_ip,
                     username=username,
                     success=True,
                     raw_line=raw_line,
-                    port=int(port),
+                    port=safe_port(port),
                     pid=pid_int,
                     service=service,
                 )
@@ -308,14 +323,17 @@ class JournaldParser:
             match = self.CONNECTION_CLOSED.search(message)
             if match:
                 ip, port = match.groups()
+                validated_ip = validate_ip(ip)
+                if not validated_ip:
+                    return None
                 return AuthEvent(
                     timestamp=timestamp,
                     event_type=EventType.DISCONNECT,
-                    ip=ip,
+                    ip=validated_ip,
                     username=None,
                     success=False,
                     raw_line=raw_line,
-                    port=int(port),
+                    port=safe_port(port),
                     pid=pid_int,
                     service=service,
                 )
@@ -324,14 +342,17 @@ class JournaldParser:
             match = self.DISCONNECTED.search(message)
             if match:
                 ip, port = match.groups()
+                validated_ip = validate_ip(ip)
+                if not validated_ip:
+                    return None
                 return AuthEvent(
                     timestamp=timestamp,
                     event_type=EventType.DISCONNECT,
-                    ip=ip,
+                    ip=validated_ip,
                     username=None,
                     success=False,
                     raw_line=raw_line,
-                    port=int(port),
+                    port=safe_port(port),
                     pid=pid_int,
                     service=service,
                 )

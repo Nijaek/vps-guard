@@ -1,10 +1,15 @@
 """Baseline statistics and drift detection for ML models."""
 
 from datetime import datetime, timezone
+import math
 import numpy as np
 import json
 from pathlib import Path
 from typing import Optional
+
+# Maximum Z-score value for drift detection (used instead of infinity)
+# This represents "extremely high" drift that's practically infinite
+MAX_Z_SCORE = 1e6
 
 
 def compute_baseline_stats(
@@ -109,9 +114,9 @@ def detect_drift(
         current_mean = float(current_means[i])
 
         # Calculate z-score (how many std devs from baseline)
-        # Avoid division by zero
+        # Avoid division by zero - use MAX_Z_SCORE instead of infinity for JSON safety
         if baseline_std < 1e-10:
-            z_score = 0.0 if abs(current_mean - baseline_mean) < 1e-10 else float('inf')
+            z_score = 0.0 if abs(current_mean - baseline_mean) < 1e-10 else MAX_Z_SCORE
         else:
             z_score = (current_mean - baseline_mean) / baseline_std
 

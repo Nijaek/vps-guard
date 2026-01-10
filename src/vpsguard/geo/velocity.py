@@ -11,6 +11,10 @@ from .reader import GeoLocation
 # Earth's radius in kilometers
 EARTH_RADIUS_KM = 6371.0
 
+# Maximum velocity value for "instantaneous" travel (used instead of infinity)
+# This is 1e9 km/h - much faster than light, but JSON-serializable
+MAX_VELOCITY_KM_H = 1e9
+
 
 @dataclass
 class TravelEvent:
@@ -101,8 +105,9 @@ def calculate_velocity(
         # If same location (within 1km), velocity is 0
         if distance < 1.0:
             return 0.0
-        # Different locations at same time = infinite velocity
-        return float('inf')
+        # Different locations at same time = "instantaneous" travel
+        # Use MAX_VELOCITY_KM_H instead of infinity for JSON safety
+        return MAX_VELOCITY_KM_H
 
     return distance / time_diff
 
@@ -145,7 +150,7 @@ def analyze_user_travel(
         time_hours = abs((time2 - time1).total_seconds()) / 3600.0
 
         if time_hours < 0.001:
-            velocity = float('inf')
+            velocity = MAX_VELOCITY_KM_H
         else:
             velocity = distance / time_hours
 
@@ -174,7 +179,7 @@ def format_velocity(velocity: float) -> str:
     Returns:
         Formatted string
     """
-    if velocity == float('inf'):
+    if velocity >= MAX_VELOCITY_KM_H:
         return "instantaneous"
     elif velocity > 10000:
         return f"{velocity / 1000:.1f}k km/h"

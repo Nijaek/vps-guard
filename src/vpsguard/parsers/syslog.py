@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import TextIO, Optional
 from vpsguard.models.events import AuthEvent, EventType, ParsedLog
-from vpsguard.parsers.base import validate_file_size
+from vpsguard.parsers.base import validate_file_size, validate_ip, safe_port, safe_pid
 
 
 class SyslogParser:
@@ -209,7 +209,7 @@ class SyslogParser:
             except ValueError:
                 return None
             process = app_name
-            pid = int(procid) if procid and procid != '-' else None
+            pid = safe_pid(procid) if procid and procid != '-' else None
         else:
             # Try BSD syslog format
             match = self.SYSLOG_PATTERN.match(line)
@@ -217,7 +217,7 @@ class SyslogParser:
                 return None
             timestamp_str, hostname, process, pid_str, message = match.groups()
             timestamp = self._parse_timestamp(timestamp_str)
-            pid = int(pid_str) if pid_str else None
+            pid = safe_pid(pid_str) if pid_str else None
 
         # Analyze message to determine event type
         return self._analyze_message(message, timestamp, process, pid, line)
@@ -281,14 +281,17 @@ class SyslogParser:
         match = self.SSH_FAILED_PASSWORD.search(message)
         if match:
             username, ip, port = match.groups()
+            validated_ip = validate_ip(ip)
+            if not validated_ip:
+                return None  # Skip events with invalid IPs
             return AuthEvent(
                 timestamp=timestamp,
                 event_type=EventType.FAILED_LOGIN,
-                ip=ip,
+                ip=validated_ip,
                 username=username,
                 success=False,
                 raw_line=raw_line,
-                port=int(port),
+                port=safe_port(port),
                 pid=pid,
                 service="sshd",
             )
@@ -297,14 +300,17 @@ class SyslogParser:
         match = self.SSH_ACCEPTED.search(message)
         if match:
             username, ip, port = match.groups()
+            validated_ip = validate_ip(ip)
+            if not validated_ip:
+                return None
             return AuthEvent(
                 timestamp=timestamp,
                 event_type=EventType.SUCCESSFUL_LOGIN,
-                ip=ip,
+                ip=validated_ip,
                 username=username,
                 success=True,
                 raw_line=raw_line,
-                port=int(port),
+                port=safe_port(port),
                 pid=pid,
                 service="sshd",
             )
@@ -313,10 +319,13 @@ class SyslogParser:
         match = self.SSH_INVALID_USER.search(message)
         if match:
             username, ip = match.groups()
+            validated_ip = validate_ip(ip)
+            if not validated_ip:
+                return None
             return AuthEvent(
                 timestamp=timestamp,
                 event_type=EventType.INVALID_USER,
-                ip=ip,
+                ip=validated_ip,
                 username=username,
                 success=False,
                 raw_line=raw_line,
@@ -395,10 +404,12 @@ class SyslogParser:
         match = self.PAM_AUTH_FAILURE.search(message)
         if match:
             username, rhost = match.groups()
+            # Validate IP if present (rhost may be None or hostname)
+            validated_ip = validate_ip(rhost) if rhost else None
             return AuthEvent(
                 timestamp=timestamp,
                 event_type=EventType.FAILED_LOGIN,
-                ip=rhost,
+                ip=validated_ip,
                 username=username,
                 success=False,
                 raw_line=raw_line,
