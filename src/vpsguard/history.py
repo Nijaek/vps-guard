@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -44,13 +45,14 @@ def validate_db_path(path: Path) -> Path:
     cwd = Path.cwd().resolve()
     home = Path.home().resolve()
     vpsguard_dir = (home / ".vpsguard").resolve()
+    temp_dir = Path(tempfile.gettempdir()).resolve()
 
     # For relative paths, they resolve relative to cwd (safe)
     if not path.is_absolute():
         return resolved
 
     # For absolute paths, check against safe directories
-    safe_bases = [cwd, home, vpsguard_dir]
+    safe_bases = [cwd, home, vpsguard_dir, temp_dir]
     for safe_base in safe_bases:
         try:
             resolved.relative_to(safe_base)

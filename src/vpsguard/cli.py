@@ -3,6 +3,7 @@
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -52,9 +53,10 @@ def validate_output_path(path: str, allow_absolute: bool = False) -> Path:
     cwd = Path.cwd().resolve()
     home = Path.home().resolve()
     vpsguard_dir = (home / ".vpsguard").resolve()
+    temp_dir = Path(tempfile.gettempdir()).resolve()
 
     # Check if path is within allowed directories
-    safe_bases = [cwd, home, vpsguard_dir]
+    safe_bases = [cwd, home, vpsguard_dir, temp_dir]
 
     # For relative paths, they resolve relative to cwd
     if not output_path.is_absolute():

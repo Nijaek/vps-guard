@@ -1,6 +1,7 @@
 """GeoIP database management."""
 
 import logging
+import tempfile
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
@@ -41,13 +42,14 @@ def _validate_db_path(path: Path) -> Path:
     cwd = Path.cwd().resolve()
     home = Path.home().resolve()
     vpsguard_dir = (home / ".vpsguard").resolve()
+    temp_dir = Path(tempfile.gettempdir()).resolve()
 
     # For relative paths, they resolve relative to cwd (safe)
     if not path.is_absolute():
         return resolved
 
     # For absolute paths, check against safe directories
-    safe_bases = [cwd, home, vpsguard_dir]
+    safe_bases = [cwd, home, vpsguard_dir, temp_dir]
     for safe_base in safe_bases:
         try:
             resolved.relative_to(safe_base)
