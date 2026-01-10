@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 from typing import TextIO, Optional
 from vpsguard.models.events import AuthEvent, EventType, ParsedLog
+from vpsguard.parsers.base import validate_file_size
 
 
 class NginxAccessLogParser:
@@ -41,9 +42,10 @@ class NginxAccessLogParser:
     )
 
     # Suspicious patterns
+    # Note: Using non-greedy quantifiers (.*?) to prevent ReDoS attacks
     PATH_TRAVERSAL = re.compile(r'\.\./', re.IGNORECASE)
     SQL_INJECTION = re.compile(
-        r"(?:union\s+select|select\s+.*\s+from|insert\s+into|update\s+.*\s+set|"
+        r"(?:union\s+select|select\s+.*?\s+from|insert\s+into|update\s+.*?\s+set|"
         r"delete\s+from|drop\s+table|or\s+1\s*=\s*1|'\s*or\s*'|;\s*--|"
         r"exec\s*\(|execute\s*\()",
         re.IGNORECASE
@@ -125,7 +127,14 @@ class NginxAccessLogParser:
 
         Returns:
             ParsedLog containing events, errors, and metadata
+
+        Raises:
+            FileTooLargeError: If file exceeds maximum size limit.
+            FileNotFoundError: If file doesn't exist.
         """
+        # Validate file size before reading to prevent memory exhaustion
+        validate_file_size(path)
+
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
 

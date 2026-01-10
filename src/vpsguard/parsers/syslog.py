@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 from typing import TextIO, Optional
 from vpsguard.models.events import AuthEvent, EventType, ParsedLog
+from vpsguard.parsers.base import validate_file_size
 
 
 class SyslogParser:
@@ -45,10 +46,11 @@ class SyslogParser:
     )
 
     # ISO timestamp syslog pattern (RFC 5424)
+    # Note: Limiting decimal places to 1-9 digits to prevent ReDoS attacks
     SYSLOG_RFC5424_PATTERN = re.compile(
         r'^(?:<\d+>)?'                           # Optional priority
         r'(\d+)?\s*'                             # Optional version
-        r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s+'  # ISO timestamp
+        r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})?)\s+'  # ISO timestamp
         r'(\S+)\s+'                              # hostname
         r'(\S+)\s+'                              # app-name
         r'(\S+)\s+'                              # procid
@@ -157,7 +159,14 @@ class SyslogParser:
 
         Returns:
             ParsedLog containing events, errors, and metadata
+
+        Raises:
+            FileTooLargeError: If file exceeds maximum size limit.
+            FileNotFoundError: If file doesn't exist.
         """
+        # Validate file size before reading to prevent memory exhaustion
+        validate_file_size(path)
+
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
 

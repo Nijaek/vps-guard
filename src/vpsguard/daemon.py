@@ -36,20 +36,69 @@ class DaemonManager:
         self.shutdown_requested = True
 
     def start(self):
-        """Start daemon: create PID file, check for duplicates."""
-        # Check if already running
-        if self.pid_file.exists():
-            existing_pid = int(self.pid_file.read_text().strip())
-            if self._is_process_running(existing_pid):
-                raise RuntimeError(f"Daemon already running (PID {existing_pid})")
-            else:
-                # Stale PID file, remove it
-                logger.warning(f"Removing stale PID file (process {existing_pid} not running)")
-                self.pid_file.unlink()
+        """Start daemon: create PID file atomically, check for duplicates.
 
-        # Write current PID
-        self.pid_file.write_text(str(os.getpid()))
-        logger.info(f"Daemon started (PID {os.getpid()})")
+        Uses atomic file creation to prevent race conditions where multiple
+        processes could start simultaneously.
+        """
+        pid = os.getpid()
+        pid_str = str(pid)
+
+        # Try atomic creation first (prevents race condition)
+        try:
+            # O_CREAT | O_EXCL ensures atomic creation - fails if file exists
+            fd = os.open(str(self.pid_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            os.write(fd, pid_str.encode('utf-8'))
+            os.close(fd)
+            logger.info(f"Daemon started (PID {pid})")
+            return
+        except FileExistsError:
+            # PID file exists - check if it's stale
+            pass
+        except OSError as e:
+            raise RuntimeError(f"Failed to create PID file: {e}")
+
+        # PID file exists - check if process is running
+        try:
+            existing_pid = self._read_pid_file()
+            if existing_pid is not None and self._is_process_running(existing_pid):
+                raise RuntimeError(f"Daemon already running (PID {existing_pid})")
+
+            # Stale PID file - remove and retry
+            logger.warning(f"Removing stale PID file (process {existing_pid} not running)")
+            try:
+                self.pid_file.unlink()
+            except FileNotFoundError:
+                pass  # Already removed by another process
+
+            # Retry atomic creation
+            try:
+                fd = os.open(str(self.pid_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+                os.write(fd, pid_str.encode('utf-8'))
+                os.close(fd)
+                logger.info(f"Daemon started (PID {pid})")
+            except FileExistsError:
+                # Another process won the race
+                raise RuntimeError("Another daemon started during initialization")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Failed to start daemon: {e}")
+
+    def _read_pid_file(self) -> Optional[int]:
+        """Read and parse PID file safely.
+
+        Returns:
+            PID as integer, or None if file is missing/corrupted.
+        """
+        try:
+            content = self.pid_file.read_text().strip()
+            return int(content)
+        except FileNotFoundError:
+            return None
+        except (ValueError, UnicodeDecodeError) as e:
+            logger.warning(f"Malformed PID file, treating as stale: {e}")
+            return None
 
     def stop(self):
         """Stop daemon: remove PID file."""
@@ -98,10 +147,7 @@ class DaemonManager:
         Returns:
             PID if daemon is running, None otherwise.
         """
-        if not self.pid_file.exists():
-            return None
-
-        pid = int(self.pid_file.read_text().strip())
-        if self._is_process_running(pid):
+        pid = self._read_pid_file()
+        if pid is not None and self._is_process_running(pid):
             return pid
         return None

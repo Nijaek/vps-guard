@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from vpsguard.models.events import AnalysisReport, RuleViolation, Severity
+from vpsguard.reporters.base import validate_report_path
 
 
 class JSONReporter:
@@ -44,9 +45,13 @@ class JSONReporter:
         Args:
             report: AnalysisReport containing violations and metadata.
             path: File path to write the report to.
+
+        Raises:
+            ValueError: If path is outside allowed directories or uses traversal.
         """
+        validated_path = validate_report_path(path)
         output = self.generate(report)
-        Path(path).write_text(output, encoding="utf-8")
+        validated_path.write_text(output, encoding="utf-8")
 
     def _serialize_report(self, report: AnalysisReport) -> dict:
         """Convert AnalysisReport to JSON-serializable dict.

@@ -1,7 +1,9 @@
-# Design documents (exclude session-specific files, include shareable plans)
+# Design documents (exclude session-specific files, include shareable plans and reviews)
 docs/*
 !docs/plans/
 !docs/plans/*.md
+!docs/code-review/
+!docs/code-review/*.md
 
 # Python
 __pycache__/

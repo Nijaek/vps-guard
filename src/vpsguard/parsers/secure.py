@@ -2,6 +2,7 @@
 
 from typing import TextIO
 from vpsguard.parsers.auth import AuthLogParser
+from vpsguard.parsers.base import validate_file_size
 from vpsguard.models.events import ParsedLog
 
 
@@ -23,7 +24,14 @@ class SecureLogParser(AuthLogParser):
 
         Returns:
             ParsedLog containing events, errors, and metadata
+
+        Raises:
+            FileTooLargeError: If file exceeds maximum size limit.
+            FileNotFoundError: If file doesn't exist.
         """
+        # Validate file size before reading to prevent memory exhaustion
+        validate_file_size(path)
+
         # Use parent's parse logic
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()

@@ -61,6 +61,12 @@ def haversine_distance(loc1: GeoLocation, loc2: GeoLocation) -> Optional[float]:
     dlon = lon2 - lon1
 
     a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+
+    # Clamp 'a' to [0, 1] to prevent math domain errors due to floating-point precision
+    # For antipodal points (opposite sides of Earth), 'a' can slightly exceed 1.0
+    # due to rounding errors, which would cause math.asin(math.sqrt(a)) to fail
+    a = min(1.0, max(0.0, a))
+
     c = 2 * math.asin(math.sqrt(a))
 
     return EARTH_RADIUS_KM * c

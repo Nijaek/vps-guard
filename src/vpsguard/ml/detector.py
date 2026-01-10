@@ -1,10 +1,20 @@
 """ML-based anomaly detectors."""
 
-from typing import Protocol
+from typing import Protocol, Optional
+import hashlib
+import hmac
+import logging
 import numpy as np
 from pathlib import Path
 from sklearn.ensemble import IsolationForest
 import pickle
+
+logger = logging.getLogger(__name__)
+
+# Security: Model signature key (should be configured externally in production)
+# This provides basic integrity verification against accidental corruption
+# For production deployments, use environment variable or secure key management
+_MODEL_SIGNATURE_KEY = b"vpsguard-model-v1"
 
 
 class Detector(Protocol):
@@ -148,13 +158,19 @@ class IsolationForestDetector:
         return normalized
 
     def save(self, path: Path) -> None:
-        """Save the trained model to disk.
+        """Save the trained model to disk with integrity signature.
 
         Args:
             path: Path to save the model to (will create parent dirs if needed).
 
         Raises:
             RuntimeError: If detector hasn't been trained yet.
+
+        Security Note:
+            Models are signed with HMAC-SHA256 for integrity verification.
+            This protects against accidental corruption but not against
+            targeted attacks. For high-security deployments, use external
+            signature verification with proper key management.
         """
         if not self.is_trained:
             raise RuntimeError("Cannot save untrained detector")
@@ -162,31 +178,86 @@ class IsolationForestDetector:
         # Ensure parent directory exists
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Save model using pickle (could also use joblib for larger models)
-        with open(path, 'wb') as f:
-            pickle.dump({
-                'model': self.model,
-                'contamination': self.contamination,
-                'random_state': self.random_state,
-                'is_trained': self.is_trained,
-            }, f)
+        # Serialize model data
+        model_data = {
+            'model': self.model,
+            'contamination': self.contamination,
+            'random_state': self.random_state,
+            'is_trained': self.is_trained,
+            'version': 1,  # Model format version for future compatibility
+        }
+        serialized = pickle.dumps(model_data)
 
-    def load(self, path: Path) -> None:
-        """Load a trained model from disk.
+        # Generate HMAC signature for integrity verification
+        signature = hmac.new(_MODEL_SIGNATURE_KEY, serialized, hashlib.sha256).digest()
+
+        # Save with signature prefix
+        with open(path, 'wb') as f:
+            f.write(signature)  # 32 bytes
+            f.write(serialized)
+
+    def load(self, path: Path, verify_signature: bool = True) -> None:
+        """Load a trained model from disk with signature verification.
 
         Args:
             path: Path to load the model from.
+            verify_signature: If True, verify HMAC signature before loading.
+                            Set to False only for loading legacy unsigned models.
 
         Raises:
             FileNotFoundError: If model file doesn't exist.
-            ValueError: If model file is corrupted or invalid.
+            ValueError: If model file is corrupted, invalid, or signature fails.
+
+        Security Warning:
+            Pickle deserialization can execute arbitrary code. Only load models
+            from trusted sources. The signature verification provides integrity
+            checking but models from untrusted sources remain dangerous.
         """
         if not path.exists():
             raise FileNotFoundError(f"Model file not found: {path}")
 
         try:
             with open(path, 'rb') as f:
-                data = pickle.load(f)
+                file_data = f.read()
+
+            # Check if this is a signed model (32-byte signature prefix)
+            if len(file_data) > 32:
+                stored_signature = file_data[:32]
+                serialized = file_data[32:]
+
+                # Try to verify signature (new format)
+                expected_signature = hmac.new(
+                    _MODEL_SIGNATURE_KEY, serialized, hashlib.sha256
+                ).digest()
+
+                if hmac.compare_digest(stored_signature, expected_signature):
+                    # Signature verified - safe to load
+                    data = pickle.loads(serialized)
+                else:
+                    # Signature mismatch - could be legacy format or tampering
+                    if verify_signature:
+                        # Try loading as legacy format (unsigned)
+                        try:
+                            data = pickle.loads(file_data)
+                            logger.warning(
+                                f"Loading unsigned legacy model from {path}. "
+                                "Re-save the model to add signature protection."
+                            )
+                        except pickle.PickleError:
+                            raise ValueError(
+                                "Model signature verification failed. "
+                                "The model file may be corrupted or tampered with."
+                            )
+                    else:
+                        data = pickle.loads(file_data)
+            else:
+                # Too small for signed format, try legacy
+                if verify_signature:
+                    logger.warning(
+                        f"Loading unsigned legacy model from {path}. "
+                        "Re-save the model to add signature protection."
+                    )
+                data = pickle.loads(file_data)
 
             self.model = data['model']
             self.contamination = data['contamination']

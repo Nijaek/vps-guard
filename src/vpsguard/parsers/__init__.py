@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from .base import Parser
+from .base import Parser, FileTooLargeError, MAX_LOG_FILE_SIZE, validate_file_size
 from .auth import AuthLogParser
 from .secure import SecureLogParser
 from .journald import JournaldParser
@@ -71,6 +71,9 @@ __all__ = [
     "JournaldParser",
     "NginxAccessLogParser",
     "SyslogParser",
+    "FileTooLargeError",
+    "MAX_LOG_FILE_SIZE",
+    "validate_file_size",
     "get_parser",
     "enrich_with_source",
 ]

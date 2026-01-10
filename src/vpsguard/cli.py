@@ -15,6 +15,67 @@ from vpsguard.parsers import get_parser, enrich_with_source
 from vpsguard.generators import SyntheticLogGenerator, GeneratorConfig, AttackConfig, AttackProfile
 from vpsguard.models.events import EventType
 
+
+def validate_output_path(path: str, allow_absolute: bool = False) -> Path:
+    """Validate that an output path is safe to write to.
+
+    Prevents path traversal attacks by ensuring paths are within safe directories.
+
+    Args:
+        path: The path to validate.
+        allow_absolute: If True, allow absolute paths within safe directories.
+                       If False, require relative paths only.
+
+    Returns:
+        Validated Path object.
+
+    Raises:
+        ValueError: If the path is outside allowed directories or uses traversal.
+    """
+    # Normalize the path
+    output_path = Path(path)
+
+    # Check for path traversal attempts
+    if '..' in output_path.parts:
+        raise ValueError(
+            f"Path traversal not allowed: {path}. "
+            "Use direct paths without '..' components."
+        )
+
+    # Get the resolved absolute path
+    try:
+        resolved = output_path.resolve()
+    except (OSError, ValueError) as e:
+        raise ValueError(f"Invalid path: {path} - {e}")
+
+    # Define safe base directories
+    cwd = Path.cwd().resolve()
+    home = Path.home().resolve()
+    vpsguard_dir = (home / ".vpsguard").resolve()
+
+    # Check if path is within allowed directories
+    safe_bases = [cwd, home, vpsguard_dir]
+
+    # For relative paths, they resolve relative to cwd
+    if not output_path.is_absolute():
+        return resolved
+
+    # For absolute paths, check against safe directories
+    if allow_absolute:
+        for safe_base in safe_bases:
+            try:
+                resolved.relative_to(safe_base)
+                return resolved
+            except ValueError:
+                continue
+
+        raise ValueError(
+            f"Output path must be within current directory, home, or ~/.vpsguard: {path}"
+        )
+
+    # Default: only allow relative paths
+    return resolved
+
 app = typer.Typer(
     name="vpsguard",
     help="ML-first VPS log security analyzer",
@@ -357,7 +418,12 @@ def generate(
 
         # Output
         if output:
-            output_path = Path(output)
+            # Validate output path to prevent path traversal attacks
+            try:
+                output_path = validate_output_path(output, allow_absolute=True)
+            except ValueError as e:
+                console.print(f"[red]Error: {e}[/red]")
+                raise typer.Exit(1)
             output_path.write_text(content, encoding="utf-8")
             console.print(f"[green]Generated {entries} log entries to {output}[/green]")
         else:
@@ -379,7 +445,12 @@ def init(
 ):
     """Initialize a default configuration file."""
     try:
-        output_path = Path(output)
+        # Validate output path to prevent path traversal attacks
+        try:
+            output_path = validate_output_path(output, allow_absolute=True)
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
 
         # Check if file exists
         if output_path.exists() and not force:
@@ -939,10 +1010,24 @@ def watch(
         daemon_manager = DaemonManager()
         pid = daemon_manager.get_running_pid()
         if pid:
-            import signal
             try:
-                os.kill(pid, signal.SIGTERM)
-                console.print(f"[green]Sent shutdown signal to daemon (PID {pid})[/green]")
+                if sys.platform == 'win32':
+                    # Windows: use taskkill for reliable process termination
+                    import subprocess
+                    result = subprocess.run(
+                        ['taskkill', '/F', '/PID', str(pid)],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        console.print(f"[green]Terminated daemon process (PID {pid})[/green]")
+                    else:
+                        console.print(f"[red]Error stopping daemon: {result.stderr}[/red]")
+                else:
+                    # Unix: use SIGTERM for graceful shutdown
+                    import signal
+                    os.kill(pid, signal.SIGTERM)
+                    console.print(f"[green]Sent shutdown signal to daemon (PID {pid})[/green]")
             except OSError as e:
                 console.print(f"[red]Error stopping daemon: {e}[/red]")
         else:
