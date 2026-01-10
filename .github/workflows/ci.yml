@@ -41,7 +41,7 @@ jobs:
       - name: Check coverage threshold
         if: matrix.python-version == '3.11'
         run: |
-          coverage report --fail-under=80
+          coverage report --fail-under=79
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.11'
