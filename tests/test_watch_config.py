@@ -1,7 +1,5 @@
 """Tests for watch configuration schema."""
 
-import pytest
-from pathlib import Path
 from vpsguard.config import load_config, validate_config
 
 

@@ -1,14 +1,13 @@
 """Tests for analyze command."""
 
 import json
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from vpsguard.cli import app
-
 
 runner = CliRunner()
 
@@ -109,10 +108,11 @@ class TestAnalyzeCommand:
     def test_analyze_geoip_passes_geo_data(self, sample_auth_log, monkeypatch):
         """GeoIP-enabled analyze should pass geo_data into the rule engine."""
         from pathlib import Path
-        from vpsguard.geo import GeoLocation
-        from vpsguard.models.events import RuleEngineOutput
+
         import vpsguard.geo as geo_module
         import vpsguard.rules.engine as rules_engine
+        from vpsguard.geo import GeoLocation
+        from vpsguard.models.events import RuleEngineOutput
 
         class DummyDB:
             exists = True

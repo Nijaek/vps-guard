@@ -1,16 +1,18 @@
 """Performance benchmarks for VPSGuard."""
 
 import time
-import pytest
 from pathlib import Path
+
+import pytest
+
+from vpsguard.config import VPSGuardConfig
 from vpsguard.parsers import get_parser
 from vpsguard.rules.engine import RuleEngine
-from vpsguard.config import VPSGuardConfig
 
 
 def generate_test_logs(path: Path, lines: int = 1000):
     """Generate test log entries for benchmarking."""
-    from vpsguard.generators import SyntheticLogGenerator, GeneratorConfig
+    from vpsguard.generators import GeneratorConfig, SyntheticLogGenerator
 
     config = GeneratorConfig(
         entries=lines,
@@ -75,8 +77,8 @@ def test_analysis_100k_lines_performance(tmp_path):
 @pytest.mark.benchmark
 def test_incremental_parsing_performance(tmp_path):
     """Benchmark: Incremental parsing should be faster than full re-parse."""
-    from vpsguard.watch import WatchDaemon
     from vpsguard.history import HistoryDB
+    from vpsguard.watch import WatchDaemon
 
     log_file = tmp_path / "benchmark.log"
     generate_test_logs(log_file, lines=10000)
@@ -111,8 +113,8 @@ def test_incremental_parsing_performance(tmp_path):
 
 
 if __name__ == "__main__":
-    import tempfile
     import sys
+    import tempfile
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)

@@ -3,7 +3,8 @@
 import ipaddress
 import logging
 from pathlib import Path
-from typing import Protocol, TextIO, Optional
+from typing import Optional, Protocol, TextIO
+
 from vpsguard.models.events import ParsedLog
 
 logger = logging.getLogger(__name__)

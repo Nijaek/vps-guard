@@ -1,19 +1,19 @@
 """CLI interface for VPSGuard."""
 
+import json
 import re
 import sys
-import json
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
+
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
-from vpsguard.parsers import get_parser, enrich_with_source
-from vpsguard.generators import SyntheticLogGenerator, GeneratorConfig, AttackConfig, AttackProfile
-from vpsguard.models.events import EventType
+from vpsguard.generators import AttackConfig, AttackProfile, GeneratorConfig, SyntheticLogGenerator
+from vpsguard.parsers import enrich_with_source, get_parser
 
 
 def validate_output_path(path: str, allow_absolute: bool = False) -> Path:
@@ -204,15 +204,15 @@ def _display_stats(events):
 
     # Create stats panel
     stats_text = Text()
-    stats_text.append(f"Total Events: ", style="bold")
+    stats_text.append("Total Events: ", style="bold")
     stats_text.append(f"{total}\n", style="cyan")
-    stats_text.append(f"Unique IPs: ", style="bold")
+    stats_text.append("Unique IPs: ", style="bold")
     stats_text.append(f"{unique_ips}\n", style="yellow")
-    stats_text.append(f"Unique Users: ", style="bold")
+    stats_text.append("Unique Users: ", style="bold")
     stats_text.append(f"{unique_users}\n", style="green")
-    stats_text.append(f"Successes: ", style="bold")
+    stats_text.append("Successes: ", style="bold")
     stats_text.append(f"{successes}\n", style="green")
-    stats_text.append(f"Failures: ", style="bold")
+    stats_text.append("Failures: ", style="bold")
     stats_text.append(f"{failures}\n", style="red")
     stats_text.append("\nEvent Types:\n", style="bold underline")
 
@@ -228,7 +228,7 @@ def _load_geo_data(events, config, enabled: bool, output_format: str):
     if not enabled:
         return None
 
-    from vpsguard.geo import get_database_info, GeoIPReader
+    from vpsguard.geo import GeoIPReader, get_database_info
 
     db_path = Path(config.geoip.database_path).expanduser()
     db_info = get_database_info(db_path)
@@ -491,8 +491,8 @@ verbosity = 1
         console.print(f"[green]Created configuration file: {output}[/green]")
         console.print("\n[cyan]Next steps:[/cyan]")
         console.print(f"  1. Edit {output} to customize your rules")
-        console.print(f"  2. Run 'vpsguard parse <logfile>' to analyze logs")
-        console.print(f"  3. Run 'vpsguard generate --entries 1000' to create test data")
+        console.print("  2. Run 'vpsguard parse <logfile>' to analyze logs")
+        console.print("  3. Run 'vpsguard generate --entries 1000' to create test data")
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -534,21 +534,21 @@ def geoip_download(
     Downloads the free GeoLite2-City database (~70MB) to ~/.vpsguard/
     This enables geographic information in analysis reports.
     """
-    from vpsguard.geo import get_database_info, download_database
+    from vpsguard.geo import download_database, get_database_info
 
     info = get_database_info()
 
     if info.exists and not force:
         console.print(f"[yellow]Database already exists at {info.path}[/yellow]")
         console.print(f"[dim]Size: {info.size_mb:.1f} MB, Modified: {info.modified}[/dim]")
-        console.print(f"[dim]Use --force to re-download[/dim]")
+        console.print("[dim]Use --force to re-download[/dim]")
         return
 
-    console.print(f"[cyan]Downloading GeoLite2-City database...[/cyan]")
-    console.print(f"[dim]This may take a moment (~70MB)[/dim]")
+    console.print("[cyan]Downloading GeoLite2-City database...[/cyan]")
+    console.print("[dim]This may take a moment (~70MB)[/dim]")
 
     try:
-        from rich.progress import Progress, SpinnerColumn, BarColumn, DownloadColumn
+        from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn
 
         with Progress(
             SpinnerColumn(),
@@ -581,7 +581,7 @@ def geoip_delete(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
 ):
     """Delete the GeoIP database."""
-    from vpsguard.geo import get_database_info, delete_database
+    from vpsguard.geo import delete_database, get_database_info
 
     info = get_database_info()
 
@@ -598,9 +598,9 @@ def geoip_delete(
             return
 
     if delete_database():
-        console.print(f"[green]Database deleted[/green]")
+        console.print("[green]Database deleted[/green]")
     else:
-        console.print(f"[red]Failed to delete database[/red]")
+        console.print("[red]Failed to delete database[/red]")
 
 
 @app.command()
@@ -614,11 +614,11 @@ def train(
     """Train ML model on log file using clean events."""
     try:
         from pathlib import Path
+
         from vpsguard.config import load_config
-        from vpsguard.rules.engine import RuleEngine
-        from vpsguard.ml.engine import MLEngine
         from vpsguard.ml.baseline import load_baseline
-        from datetime import datetime
+        from vpsguard.ml.engine import MLEngine
+        from vpsguard.rules.engine import RuleEngine
 
         model_path = Path(model)
 
@@ -657,7 +657,7 @@ def train(
             if config:
                 console.print(f"[dim]Loaded config from: {config}[/dim]")
             else:
-                console.print(f"[dim]Using default configuration[/dim]")
+                console.print("[dim]Using default configuration[/dim]")
         except (FileNotFoundError, ValueError) as e:
             console.print(f"[red]Error: {e}[/red]")
             raise typer.Exit(1)
@@ -678,13 +678,13 @@ def train(
 
         # Parse logs
         parser = get_parser(input_format)
-        console.print(f"[dim]Parsing logs...[/dim]")
+        console.print("[dim]Parsing logs...[/dim]")
         parsed = parser.parse(content)
         enrich_with_source(parsed, source=str(path))
         console.print(f"[green]Parsed {len(parsed.events)} events[/green]")
 
         # Run rule engine to get clean events
-        console.print(f"[dim]Running rule engine to filter attacks...[/dim]")
+        console.print("[dim]Running rule engine to filter attacks...[/dim]")
         geo_data = _load_geo_data(parsed.events, vps_config, vps_config.geoip.enabled, "terminal")
         engine = RuleEngine(vps_config)
         rule_output = engine.evaluate(parsed.events, geo_data=geo_data)
@@ -693,12 +693,12 @@ def train(
         console.print(f"[green]Clean events for training: {len(rule_output.clean_events)}[/green]")
 
         if len(rule_output.clean_events) < 10:
-            console.print(f"[red]Error: Not enough clean events for training (need at least 10)[/red]")
-            console.print(f"[yellow]This usually means your log file is mostly attacks.[/yellow]")
+            console.print("[red]Error: Not enough clean events for training (need at least 10)[/red]")
+            console.print("[yellow]This usually means your log file is mostly attacks.[/yellow]")
             raise typer.Exit(1)
 
         # Train ML model
-        console.print(f"[dim]Training ML model...[/dim]")
+        console.print("[dim]Training ML model...[/dim]")
         ml_engine = MLEngine()
         baseline = ml_engine.train(rule_output.clean_events)
 
@@ -744,10 +744,11 @@ def analyze(
     try:
         from datetime import datetime, timezone
         from pathlib import Path
+
         from vpsguard.config import load_config
-        from vpsguard.rules.engine import RuleEngine
+        from vpsguard.models.events import AnalysisReport, AuthEvent, Severity
         from vpsguard.reporters import get_reporter
-        from vpsguard.models.events import AnalysisReport, Severity, AuthEvent
+        from vpsguard.rules.engine import RuleEngine
 
         # Load configuration
         try:
@@ -771,7 +772,7 @@ def analyze(
             if config:
                 console.print(f"[dim]Loaded config from: {config}[/dim]")
             else:
-                console.print(f"[dim]Using default configuration[/dim]")
+                console.print("[dim]Using default configuration[/dim]")
 
         # Collect all events from all files
         all_events: List[AuthEvent] = []
@@ -839,7 +840,7 @@ def analyze(
 
         # Run rule engine
         if format != "json":
-            console.print(f"[dim]Running rule engine...[/dim]")
+            console.print("[dim]Running rule engine...[/dim]")
 
         engine = RuleEngine(vps_config)
         rule_output = engine.evaluate(all_events, geo_data=geo_data)
@@ -867,13 +868,12 @@ def analyze(
             from vpsguard.ml.engine import MLEngine
 
             model_path = Path(model)
-            baseline_path = model_path.with_suffix('.json')
 
             if not model_path.exists():
                 if format != "json":
                     console.print(f"[yellow]Warning: ML model not found at {model_path}[/yellow]")
                     console.print(f"[yellow]Train a model first with: vpsguard train <logfile> --model {model}[/yellow]")
-                    console.print(f"[yellow]Continuing with rule-based detection only...[/yellow]")
+                    console.print("[yellow]Continuing with rule-based detection only...[/yellow]")
             else:
                 try:
                     if format != "json":
@@ -883,7 +883,7 @@ def analyze(
                     ml_engine.load(model_path)
 
                     if format != "json":
-                        console.print(f"[dim]Running ML anomaly detection...[/dim]")
+                        console.print("[dim]Running ML anomaly detection...[/dim]")
 
                     # Detect anomalies
                     anomalies = ml_engine.detect(all_events, score_threshold=0.6)
@@ -899,7 +899,7 @@ def analyze(
                 except Exception as e:
                     if format != "json":
                         console.print(f"[yellow]Warning: ML detection failed: {e}[/yellow]")
-                        console.print(f"[yellow]Continuing with rule-based detection only...[/yellow]")
+                        console.print("[yellow]Continuing with rule-based detection only...[/yellow]")
 
         # Build analysis report
         analysis_report = AnalysisReport(
@@ -974,9 +974,10 @@ def watch(
         vpsguard watch /var/log/auth.log --stop
         vpsguard watch /var/log/auth.log --interval 30m
     """
-    import time
     import os
+    import time
     from datetime import datetime
+
     from vpsguard.config import load_config
     from vpsguard.daemon import DaemonManager
     from vpsguard.watch import WatchDaemon
@@ -1079,7 +1080,7 @@ def watch(
                 time.sleep(daemon.interval_seconds)
 
         except KeyboardInterrupt:
-            console.print(f"\n[yellow]Shutting down...[/yellow]")
+            console.print("\n[yellow]Shutting down...[/yellow]")
             console.print(f"[dim]Total runs: {run_count}[/dim]")
         raise typer.Exit()
 
@@ -1090,7 +1091,7 @@ def watch(
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[green]Watch daemon started[/green]")
+    console.print("[green]Watch daemon started[/green]")
     console.print(f"  Monitoring: {log_file}")
     console.print(f"  Interval: {watch_interval}")
     console.print(f"  PID: {os.getpid()}")
@@ -1144,6 +1145,7 @@ def history(
         vpsguard history cleanup --days 90
     """
     from pathlib import Path
+
     from vpsguard.history import HistoryDB
 
     try:
@@ -1184,7 +1186,7 @@ def history(
                 )
 
             console.print(table)
-            console.print(f"\n[dim]Use 'vpsguard history show --run ID' for details[/dim]")
+            console.print("\n[dim]Use 'vpsguard history show --run ID' for details[/dim]")
 
         elif action == "show":
             if not run_id:
@@ -1261,12 +1263,12 @@ def history(
             ))
 
             if comparison['new_ips']:
-                console.print(f"\n[bold]New offending IPs:[/bold]")
+                console.print("\n[bold]New offending IPs:[/bold]")
                 for ip in comparison['new_ips'][:10]:
                     console.print(f"  [red]+ {ip}[/red]")
 
             if comparison['gone_ips']:
-                console.print(f"\n[bold]No longer seen:[/bold]")
+                console.print("\n[bold]No longer seen:[/bold]")
                 for ip in comparison['gone_ips'][:10]:
                     console.print(f"  [green]- {ip}[/green]")
 

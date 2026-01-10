@@ -1,11 +1,11 @@
 """Baseline statistics and drift detection for ML models."""
 
-from datetime import datetime, timezone
-import math
-import numpy as np
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+import numpy as np
 
 # Maximum Z-score value for drift detection (used instead of infinity)
 # This represents "extremely high" drift that's practically infinite

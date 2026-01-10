@@ -1,12 +1,12 @@
 """Synthetic log generator for testing VPSGuard detection capabilities."""
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 import json
 import random
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Optional
 
-from vpsguard.generators.profiles import AttackProfile, AttackConfig
+from vpsguard.generators.profiles import AttackConfig, AttackProfile
 
 
 @dataclass

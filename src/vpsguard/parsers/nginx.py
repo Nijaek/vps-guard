@@ -2,7 +2,8 @@
 
 import re
 from datetime import datetime
-from typing import TextIO, Optional
+from typing import Optional, TextIO
+
 from vpsguard.models.events import AuthEvent, EventType, ParsedLog
 from vpsguard.parsers.base import validate_file_size, validate_ip
 

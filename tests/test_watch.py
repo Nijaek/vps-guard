@@ -1,11 +1,10 @@
 """Tests for watch daemon."""
 
+
 import pytest
-from pathlib import Path
-from datetime import datetime, timezone, timedelta
-from vpsguard.watch import WatchDaemon, parse_interval, detect_log_format
-from vpsguard.models.events import WatchState
+
 from vpsguard.history import HistoryDB
+from vpsguard.watch import WatchDaemon, detect_log_format, parse_interval
 
 
 @pytest.fixture

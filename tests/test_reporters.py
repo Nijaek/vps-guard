@@ -1,28 +1,29 @@
 """Tests for report generators."""
 
 import json
+import tempfile
 from datetime import datetime
 from pathlib import Path
-import tempfile
 
 import pytest
 
+from vpsguard.geo.reader import GeoLocation
 from vpsguard.models.events import (
     AnalysisReport,
+    AnomalyResult,
+    AuthEvent,
+    Confidence,
+    EventType,
     RuleViolation,
     Severity,
-    AuthEvent,
-    EventType,
 )
 from vpsguard.reporters import (
-    TerminalReporter,
-    MarkdownReporter,
     JSONReporter,
+    MarkdownReporter,
+    TerminalReporter,
     get_reporter,
 )
 from vpsguard.reporters.html import HTMLReporter
-from vpsguard.models.events import AnomalyResult, Confidence
-from vpsguard.geo.reader import GeoLocation
 
 
 @pytest.fixture

@@ -2,13 +2,14 @@
 
 from pathlib import Path
 from typing import Optional
+
 import numpy as np
 
-from vpsguard.models.events import AuthEvent, AnomalyResult, Confidence
-from vpsguard.ml.features import FeatureExtractor, FeatureSet
-from vpsguard.ml.detector import IsolationForestDetector, Detector
-from vpsguard.ml.baseline import compute_baseline_stats, save_baseline, load_baseline, detect_drift
+from vpsguard.ml.baseline import compute_baseline_stats, detect_drift, load_baseline, save_baseline
+from vpsguard.ml.detector import Detector, IsolationForestDetector
 from vpsguard.ml.explain import explain_anomaly
+from vpsguard.ml.features import FeatureExtractor
+from vpsguard.models.events import AnomalyResult, AuthEvent, Confidence
 
 
 class MLEngine:

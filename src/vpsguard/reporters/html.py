@@ -1,10 +1,8 @@
 """HTML reporter for generating shareable single-file reports."""
 
-from pathlib import Path
 from collections import defaultdict
-from datetime import datetime
 
-from vpsguard.models.events import AnalysisReport, RuleViolation, AnomalyResult, Severity, Confidence
+from vpsguard.models.events import AnalysisReport, Confidence, RuleViolation, Severity
 from vpsguard.reporters.base import validate_report_path
 
 

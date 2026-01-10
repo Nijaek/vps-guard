@@ -1,30 +1,30 @@
 """Tests for GeoIP module."""
 
-import pytest
-from pathlib import Path
 from datetime import datetime
-from unittest.mock import Mock, patch, MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
-from vpsguard.geo.reader import GeoLocation, GeoIPReader
+import pytest
+
+from vpsguard.config import GeoVelocityConfig, load_config
 from vpsguard.geo.database import (
-    get_default_db_path,
-    get_database_info,
-    download_database,
     delete_database,
-    GeoDatabase,
+    download_database,
+    get_database_info,
+    get_default_db_path,
 )
+from vpsguard.geo.reader import GeoIPReader, GeoLocation
 from vpsguard.geo.velocity import (
-    haversine_distance,
-    calculate_velocity,
-    analyze_user_travel,
-    format_velocity,
-    format_travel_summary,
-    TravelEvent,
     MAX_VELOCITY_KM_H,
+    TravelEvent,
+    analyze_user_travel,
+    calculate_velocity,
+    format_travel_summary,
+    format_velocity,
+    haversine_distance,
 )
-from vpsguard.config import load_config, VPSGuardConfig, GeoIPConfig, GeoVelocityConfig
-from vpsguard.rules.geo_velocity import GeoVelocityRule
 from vpsguard.models.events import AuthEvent, EventType
+from vpsguard.rules.geo_velocity import GeoVelocityRule
 
 
 class TestGeoLocation:
@@ -391,8 +391,9 @@ class TestGeoIPInReports:
 
     def test_analysis_report_with_geo_data(self):
         """Test that AnalysisReport accepts geo_data."""
-        from vpsguard.models.events import AnalysisReport
         from datetime import timezone
+
+        from vpsguard.models.events import AnalysisReport
 
         geo_data = {
             "1.2.3.4": GeoLocation(country_code="US", city="New York"),
@@ -414,8 +415,9 @@ class TestGeoIPInReports:
 
     def test_analysis_report_without_geo_data(self):
         """Test that AnalysisReport works without geo_data."""
-        from vpsguard.models.events import AnalysisReport
         from datetime import timezone
+
+        from vpsguard.models.events import AnalysisReport
 
         report = AnalysisReport(
             timestamp=datetime.now(timezone.utc),
@@ -466,7 +468,6 @@ class TestCalculateVelocity:
 
     def test_basic_velocity(self):
         """Test basic velocity calculation."""
-        from datetime import timedelta
 
         nyc = GeoLocation(latitude=40.7128, longitude=-74.0060)
         london = GeoLocation(latitude=51.5074, longitude=-0.1278)

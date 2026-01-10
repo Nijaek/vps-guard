@@ -1,6 +1,5 @@
 """Markdown reporter for generating documentation-ready reports."""
 
-from pathlib import Path
 from collections import defaultdict
 
 from vpsguard.models.events import AnalysisReport, RuleViolation, Severity

@@ -1,7 +1,6 @@
 """JSON reporter for machine-readable output."""
 
 import json
-from pathlib import Path
 
 from vpsguard.models.events import AnalysisReport, RuleViolation, Severity
 from vpsguard.reporters.base import validate_report_path

@@ -5,8 +5,8 @@ from datetime import datetime
 from typing import Optional
 
 from vpsguard.config import GeoVelocityConfig
+from vpsguard.geo import GeoLocation, format_velocity, haversine_distance
 from vpsguard.models.events import AuthEvent, EventType, RuleViolation, Severity
-from vpsguard.geo import GeoLocation, haversine_distance, format_velocity
 
 
 class GeoVelocityRule:

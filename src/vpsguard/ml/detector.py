@@ -1,13 +1,14 @@
 """ML-based anomaly detectors."""
 
-from typing import Protocol, Optional
 import hashlib
 import hmac
 import logging
-import numpy as np
-from pathlib import Path
-from sklearn.ensemble import IsolationForest
 import pickle
+from pathlib import Path
+from typing import Protocol
+
+import numpy as np
+from sklearn.ensemble import IsolationForest
 
 logger = logging.getLogger(__name__)
 

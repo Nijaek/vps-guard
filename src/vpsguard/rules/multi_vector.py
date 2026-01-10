@@ -5,8 +5,9 @@ indicating a multi-service scanning or coordinated attack.
 """
 
 from collections import defaultdict
-from vpsguard.models.events import AuthEvent, RuleViolation, Severity
+
 from vpsguard.config import MultiVectorConfig
+from vpsguard.models.events import AuthEvent, RuleViolation, Severity
 
 
 class MultiVectorRule:

@@ -1,6 +1,5 @@
 """GeoIP database management."""
 
-import hashlib
 import logging
 import urllib.request
 from dataclasses import dataclass

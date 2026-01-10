@@ -1,10 +1,10 @@
 """Reporter module for generating security reports in multiple formats."""
 
 from .base import Reporter
-from .terminal import TerminalReporter
-from .markdown import MarkdownReporter
-from .json import JSONReporter
 from .html import HTMLReporter
+from .json import JSONReporter
+from .markdown import MarkdownReporter
+from .terminal import TerminalReporter
 
 
 def get_reporter(format: str) -> Reporter:

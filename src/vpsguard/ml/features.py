@@ -1,10 +1,10 @@
 """Feature extraction for ML-based anomaly detection."""
 
-import numpy as np
-from dataclasses import dataclass
 from collections import defaultdict
-from datetime import timedelta
-from typing import Optional
+from dataclasses import dataclass
+
+import numpy as np
+
 from vpsguard.models.events import AuthEvent
 
 

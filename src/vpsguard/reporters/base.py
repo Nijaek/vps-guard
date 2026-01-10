@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Protocol
+
 from vpsguard.models.events import AnalysisReport
 
 

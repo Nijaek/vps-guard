@@ -1,19 +1,18 @@
 """Basic tests for core data models."""
 
 from datetime import datetime
-import pytest
 
 from vpsguard.models.events import (
-    AuthEvent,
-    EventType,
-    Severity,
-    Confidence,
-    ParsedLog,
-    RuleViolation,
-    RuleEngineOutput,
-    AnomalyResult,
-    BaselineStats,
     AnalysisReport,
+    AnomalyResult,
+    AuthEvent,
+    BaselineStats,
+    Confidence,
+    EventType,
+    ParsedLog,
+    RuleEngineOutput,
+    RuleViolation,
+    Severity,
 )
 
 

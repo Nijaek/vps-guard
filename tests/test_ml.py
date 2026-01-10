@@ -1,23 +1,24 @@
 """Tests for ML-based anomaly detection."""
 
-import pytest
-import numpy as np
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
-import tempfile
 
-from vpsguard.models.events import AuthEvent, EventType, Confidence
-from vpsguard.ml.features import FeatureExtractor, FeatureSet
-from vpsguard.ml.detector import IsolationForestDetector
+import numpy as np
+import pytest
+
 from vpsguard.ml.baseline import (
     compute_baseline_stats,
     detect_drift,
-    save_baseline,
-    load_baseline,
     format_drift_report,
+    load_baseline,
+    save_baseline,
 )
-from vpsguard.ml.explain import explain_anomaly, format_anomaly_summary
+from vpsguard.ml.detector import IsolationForestDetector
 from vpsguard.ml.engine import MLEngine
+from vpsguard.ml.explain import explain_anomaly, format_anomaly_summary
+from vpsguard.ml.features import FeatureExtractor
+from vpsguard.models.events import AuthEvent, Confidence, EventType
 
 
 def create_normal_events(ip: str, count: int, start_time: datetime) -> list[AuthEvent]:

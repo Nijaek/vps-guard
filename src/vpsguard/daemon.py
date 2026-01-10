@@ -1,8 +1,8 @@
 """Daemon manager for background watch mode."""
 
+import logging
 import os
 import signal
-import logging
 from pathlib import Path
 from typing import Optional
 

@@ -1,13 +1,16 @@
 """SQLite-based history storage for VPSGuard analysis runs."""
 
-import sqlite3
 import json
-from pathlib import Path
+import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
-from dataclasses import asdict
 
-from vpsguard.models.events import AnalysisReport, RuleViolation, AnomalyResult, Severity, Confidence, WatchState
+from vpsguard.models.events import (
+    AnalysisReport,
+    Severity,
+    WatchState,
+)
 
 
 def validate_db_path(path: Path) -> Path:

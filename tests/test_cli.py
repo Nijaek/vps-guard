@@ -3,8 +3,9 @@
 import json
 import tempfile
 from pathlib import Path
-from typer.testing import CliRunner
+
 import pytest
+from typer.testing import CliRunner
 
 from vpsguard.cli import app
 

@@ -1,10 +1,9 @@
 """Terminal reporter using Rich for beautiful console output."""
 
-from pathlib import Path
 from collections import defaultdict
+
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 
 from vpsguard.models.events import AnalysisReport, RuleViolation, Severity
@@ -109,14 +108,6 @@ class TerminalReporter:
         header_text.append("VPSGUARD SECURITY REPORT\n", style="bold white")
         header_text.append(f"{report.timestamp.strftime('%Y-%m-%d %H:%M UTC')}\n\n", style="dim")
 
-        # Severity counts with colors
-        severity_styles = {
-            Severity.CRITICAL: "bold red",
-            Severity.HIGH: "bold yellow",
-            Severity.MEDIUM: "bold cyan",
-            Severity.LOW: "bold white",
-        }
-
         parts = []
         for severity in [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW]:
             count = counts.get(severity, 0)
@@ -204,7 +195,7 @@ class TerminalReporter:
         details_text = Text()
 
         # Basic info
-        details_text.append(f"IP: ", style="bold")
+        details_text.append("IP: ", style="bold")
         details_text.append(f"{violation.ip}", style=color)
 
         # Add geo location if available
@@ -214,16 +205,16 @@ class TerminalReporter:
                 details_text.append(f" ({geo})", style="dim cyan")
         details_text.append("\n")
 
-        details_text.append(f"Time: ", style="bold")
+        details_text.append("Time: ", style="bold")
         details_text.append(f"{violation.timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n", style="white")
 
-        details_text.append(f"Severity: ", style="bold")
+        details_text.append("Severity: ", style="bold")
         details_text.append(f"{violation.severity.value.upper()}\n", style=color)
 
         # Show log sources if multiple (multi-log correlation)
         sources = violation.log_sources
         if len(sources) > 1:
-            details_text.append(f"Sources: ", style="bold")
+            details_text.append("Sources: ", style="bold")
             details_text.append(f"{', '.join(sources)}\n", style="magenta")
 
         # Description

@@ -1,6 +1,6 @@
 """Synthetic log generators for testing VPSGuard."""
 
-from vpsguard.generators.profiles import AttackProfile, AttackConfig
+from vpsguard.generators.profiles import AttackConfig, AttackProfile
 from vpsguard.generators.synthetic import GeneratorConfig, SyntheticLogGenerator
 
 __all__ = [

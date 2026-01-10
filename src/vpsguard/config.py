@@ -3,10 +3,10 @@
 Loads and validates TOML configuration files with dataclass-based structure.
 """
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-import sys
 
 # tomllib is stdlib in Python 3.11+, use tomli for 3.10
 if sys.version_info >= (3, 11):

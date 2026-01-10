@@ -1,9 +1,8 @@
 """Parser for RHEL/CentOS /var/log/secure format."""
 
-from typing import TextIO
+from vpsguard.models.events import ParsedLog
 from vpsguard.parsers.auth import AuthLogParser
 from vpsguard.parsers.base import validate_file_size
-from vpsguard.models.events import ParsedLog
 
 
 class SecureLogParser(AuthLogParser):

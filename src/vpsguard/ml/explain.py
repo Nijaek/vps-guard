@@ -1,7 +1,8 @@
 """Explainability for ML-based anomaly detection."""
 
-import numpy as np
 from typing import Optional
+
+import numpy as np
 
 
 def explain_anomaly(

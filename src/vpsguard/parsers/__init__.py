@@ -2,26 +2,27 @@
 
 from pathlib import Path
 
+from vpsguard.models.events import ParsedLog
+
+from .auth import AuthLogParser
 from .base import (
-    Parser,
-    FileTooLargeError,
     MAX_LOG_FILE_SIZE,
-    validate_file_size,
-    validate_ip,
-    safe_int,
-    safe_port,
-    safe_pid,
-    MIN_PORT,
+    MAX_PID,
     MAX_PORT,
     MIN_PID,
-    MAX_PID,
+    MIN_PORT,
+    FileTooLargeError,
+    Parser,
+    safe_int,
+    safe_pid,
+    safe_port,
+    validate_file_size,
+    validate_ip,
 )
-from .auth import AuthLogParser
-from .secure import SecureLogParser
 from .journald import JournaldParser
 from .nginx import NginxAccessLogParser
+from .secure import SecureLogParser
 from .syslog import SyslogParser
-from vpsguard.models.events import ParsedLog
 
 
 def enrich_with_source(parsed: ParsedLog, source: str | None = None) -> ParsedLog:

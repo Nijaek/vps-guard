@@ -1,18 +1,19 @@
 """Comprehensive tests for synthetic log generators."""
 
-import tempfile
-import os
-from datetime import datetime, timedelta
 import json
+import os
+import tempfile
+from datetime import datetime
+
 import pytest
 
 from vpsguard.generators import (
-    AttackProfile,
     AttackConfig,
+    AttackProfile,
     GeneratorConfig,
     SyntheticLogGenerator,
 )
-from vpsguard.parsers import AuthLogParser, SecureLogParser, JournaldParser
+from vpsguard.parsers import AuthLogParser, JournaldParser, SecureLogParser
 
 
 class TestAttackProfile:
@@ -204,7 +205,7 @@ class TestSyntheticLogGenerator:
         lines = output.strip().split("\n")
 
         # Should have mix of normal and attack traffic
-        failed_lines = [l for l in lines if "Failed password" in l]
+        failed_lines = [line for line in lines if "Failed password" in line]
         assert len(failed_lines) > 0
 
         # Extract IPs from failed attempts - focus on attacker IPs (192.168.x.x)
@@ -238,7 +239,7 @@ class TestSyntheticLogGenerator:
         output = gen.generate()
 
         lines = output.strip().split("\n")
-        failed_lines = [l for l in lines if "Failed password" in l and "192.168" in l]
+        failed_lines = [line for line in lines if "Failed password" in line and "192.168" in line]
 
         # Extract IPs from failed attempts
         ips = set()
@@ -305,8 +306,7 @@ class TestSyntheticLogGenerator:
         lines = output.strip().split("\n")
 
         # Parse timestamps from attack lines
-        parser = AuthLogParser()
-        attack_lines = [l for l in lines if "Failed password" in l and "192.168" in l]
+        attack_lines = [line for line in lines if "Failed password" in line and "192.168" in line]
 
         # Should be spread out over time
         assert len(attack_lines) >= 5
@@ -336,9 +336,9 @@ class TestSyntheticLogGenerator:
         assert attack_ip is not None
 
         # Check for failures and success from same IP
-        ip_lines = [l for l in lines if attack_ip in l]
-        failed = [l for l in ip_lines if "Failed password" in l]
-        accepted = [l for l in ip_lines if "Accepted password" in l]
+        ip_lines = [line for line in lines if attack_ip in line]
+        failed = [line for line in ip_lines if "Failed password" in line]
+        accepted = [line for line in ip_lines if "Accepted password" in line]
 
         # Should have failures followed by success
         assert len(failed) > 0
@@ -357,7 +357,7 @@ class TestSyntheticLogGenerator:
         output = gen.generate()
 
         lines = output.strip().split("\n")
-        invalid_user_lines = [l for l in lines if "Invalid user" in l]
+        invalid_user_lines = [line for line in lines if "Invalid user" in line]
 
         # Should have invalid user attempts
         assert len(invalid_user_lines) > 0

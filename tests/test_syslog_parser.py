@@ -1,9 +1,10 @@
 """Tests for the syslog parser."""
 
+
 import pytest
-from datetime import datetime
-from vpsguard.parsers.syslog import SyslogParser
+
 from vpsguard.models.events import EventType
+from vpsguard.parsers.syslog import SyslogParser
 
 
 class TestSyslogParser:

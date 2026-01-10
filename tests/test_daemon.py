@@ -1,10 +1,11 @@
 """Tests for daemon manager."""
 
-import pytest
-import signal
 import os
+import signal
 import sys
-from pathlib import Path
+
+import pytest
+
 from vpsguard.daemon import DaemonManager
 
 

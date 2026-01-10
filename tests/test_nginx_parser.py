@@ -1,9 +1,10 @@
 """Tests for the Nginx access log parser."""
 
+
 import pytest
-from datetime import datetime
-from vpsguard.parsers.nginx import NginxAccessLogParser
+
 from vpsguard.models.events import EventType
+from vpsguard.parsers.nginx import NginxAccessLogParser
 
 
 class TestNginxAccessLogParser:

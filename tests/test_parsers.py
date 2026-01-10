@@ -1,21 +1,20 @@
 """Comprehensive tests for log parsers."""
 
 import json
-from datetime import datetime
-from io import StringIO
-import tempfile
 import os
+import tempfile
+from io import StringIO
+
 import pytest
 
-from vpsguard.parsers import (
-    Parser,
-    AuthLogParser,
-    SecureLogParser,
-    JournaldParser,
-    get_parser,
-    enrich_with_source,
-)
 from vpsguard.models.events import EventType
+from vpsguard.parsers import (
+    AuthLogParser,
+    JournaldParser,
+    SecureLogParser,
+    enrich_with_source,
+    get_parser,
+)
 
 
 class TestAuthLogParser:

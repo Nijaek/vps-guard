@@ -3,6 +3,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
+
 class EventType(Enum):
     FAILED_LOGIN = "failed_login"
     SUCCESSFUL_LOGIN = "successful_login"

@@ -1,11 +1,17 @@
 """Tests for history database and watch state persistence."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from pathlib import Path
-from datetime import datetime, timezone, timedelta
 
 from vpsguard.history import HistoryDB
-from vpsguard.models.events import AnalysisReport, RuleViolation, AnomalyResult, Severity, Confidence
+from vpsguard.models.events import (
+    AnalysisReport,
+    AnomalyResult,
+    Confidence,
+    RuleViolation,
+    Severity,
+)
 
 
 @pytest.fixture
@@ -72,7 +78,7 @@ def test_save_and_load_watch_state(history_db):
         last_findings_counts={"critical": 0, "high": 2, "medium": 10}
     )
 
-    run_id = history_db.save_watch_state(state)
+    history_db.save_watch_state(state)
 
     # Load it back
     loaded = history_db.get_watch_state("/var/log/auth.log")

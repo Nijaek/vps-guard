@@ -2,9 +2,10 @@
 
 import re
 from datetime import datetime
-from typing import TextIO, Optional
+from typing import Optional, TextIO
+
 from vpsguard.models.events import AuthEvent, EventType, ParsedLog
-from vpsguard.parsers.base import validate_file_size, validate_ip, safe_port, safe_pid
+from vpsguard.parsers.base import safe_pid, safe_port, validate_file_size, validate_ip
 
 
 class SyslogParser:

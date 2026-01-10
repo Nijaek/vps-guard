@@ -1,15 +1,15 @@
 """Watch daemon for scheduled batch analysis."""
 
-import os
 import logging
-from pathlib import Path
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
-from vpsguard.parsers import get_parser, enrich_with_source
-from vpsguard.models.events import WatchState, Severity
-from vpsguard.history import HistoryDB
 from vpsguard.daemon import DaemonManager
+from vpsguard.history import HistoryDB
+from vpsguard.models.events import Severity, WatchState
+from vpsguard.parsers import enrich_with_source, get_parser
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +268,7 @@ class WatchDaemon:
         geo_data = None
         if config.geoip.enabled:
             try:
-                from vpsguard.geo import get_database_info, GeoIPReader
+                from vpsguard.geo import GeoIPReader, get_database_info
 
                 db_path = Path(config.geoip.database_path).expanduser()
                 db_info = get_database_info(db_path)
@@ -310,8 +310,8 @@ class WatchDaemon:
         reports_written: list[str] = []
 
         if alert_triggered:
-            from vpsguard.reporters import get_reporter
             from vpsguard.models.events import AnalysisReport
+            from vpsguard.reporters import get_reporter
 
             report = AnalysisReport(
                 timestamp=datetime.now(timezone.utc),
