@@ -457,4 +457,4 @@ VPSGuard is a batch analysis tool for security review, forensics, and scheduled 
 
 ## License
 
-MIT
+[MIT](LICENSE)
